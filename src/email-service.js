@@ -1,4 +1,4 @@
-import smtp2Goapi from '@api/smtp2goapi';
+import SMTP2GOApiModule from 'smtp2go-nodejs';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -6,6 +6,7 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const logger = require('./logger.cjs');
+const createSMTP2GOApi = SMTP2GOApiModule?.default || SMTP2GOApiModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,10 +15,65 @@ class EmailService {
   constructor() {
     this.apiKey = process.env.SMTP2GO_API_KEY;
     this.recipients = this.parseRecipients(process.env.EMAIL_RECIPIENT);
+    this.smtp2go = null;
     
     if (this.apiKey) {
-      smtp2Goapi.auth(this.apiKey);
+      this.smtp2go = createSMTP2GOApi(this.apiKey);
     }
+  }
+
+  buildAttachmentObject(attachment) {
+    if (!attachment || !attachment.fileblob) {
+      return null;
+    }
+
+    return {
+      filename: attachment.filename,
+      fileblob: attachment.fileblob,
+      mimetype: attachment.mimetype,
+      async readFileBlob() {
+        return this;
+      },
+      forSend() {
+        return {
+          filename: this.filename,
+          fileblob: this.fileblob,
+          mimetype: this.mimetype
+        };
+      }
+    };
+  }
+
+  buildMailService({ to, subject, html, text, attachments = [] }) {
+    const mailService = this.smtp2go
+      .mail()
+      .to((to || []).map((email) => ({ email })))
+      .from({ email: 'info@evo.gl', name: 'Booking Price Monitor' })
+      .subject(subject)
+      .html(html)
+      .text(text)
+      .headers([{ header: 'Content-Type', value: 'application/json' }]);
+
+    for (const attachment of attachments) {
+      if (typeof attachment === 'string') {
+        mailService.attach(attachment);
+        continue;
+      }
+
+      if (attachment?.filepath) {
+        mailService.attach(attachment.filepath);
+        continue;
+      }
+
+      if (attachment?.fileblob) {
+        const attachmentObject = this.buildAttachmentObject(attachment);
+        if (attachmentObject) {
+          mailService.attach(attachmentObject);
+        }
+      }
+    }
+
+    return mailService;
   }
 
   async sendEmailWithAttachment(csvFilePath, summary, insightsHtml) {
@@ -30,26 +86,24 @@ class EmailService {
       const fileContent = await fs.readFile(csvFilePath);
       const fileName = path.basename(csvFilePath);
       
-      const emailData = {
-        to: this.recipients,
-        custom_headers: [{header: 'Content-Type', value: 'application/json'}],
-        fastaccept: false,
-        sender: 'Booking Price Monitor <info@evo.gl>',
-        subject: `Booking.com Price Monitor Report - ${new Date().toLocaleDateString()}`,
-        html_body: await this.generateEmailBody(summary, insightsHtml),
-        text_body: 'Booking.com Price Monitor Report attached'
-      };
-
-      // Add attachment if file exists
+      const attachments = [];
       if (fileContent) {
-        emailData.attachments = [{
+        attachments.push({
           filename: fileName,
           fileblob: fileContent.toString('base64'),
           mimetype: 'text/csv'
-        }];
+        });
       }
 
-      const { data } = await smtp2Goapi.sendStandardEmail(emailData);
+      const mailService = this.buildMailService({
+        to: this.recipients,
+        subject: `Booking.com Price Monitor Report - ${new Date().toLocaleDateString()}`,
+        html: await this.generateEmailBody(summary, insightsHtml),
+        text: 'Booking.com Price Monitor Report attached',
+        attachments
+      });
+
+      const data = await this.smtp2go.client().consume(mailService);
       
       logger.info('Email API response:', data);
       logger.info(`Email sent successfully to ${this.recipients.join(', ')}`);
@@ -78,21 +132,15 @@ class EmailService {
     }
 
     try {
-      const emailData = {
+      const mailService = this.buildMailService({
         to: recipients,
-        custom_headers: [{ header: 'Content-Type', value: 'application/json' }],
-        fastaccept: false,
-        sender: 'Booking Price Monitor <info@evo.gl>',
         subject: subject || `Booking.com Price Monitor Report - ${new Date().toLocaleDateString()}`,
-        html_body: html || '<p>No content available.</p>',
-        text_body: 'Booking.com Price Monitor Report'
-      };
+        html: html || '<p>No content available.</p>',
+        text: 'Booking.com Price Monitor Report',
+        attachments
+      });
 
-      if (attachments && attachments.length > 0) {
-        emailData.attachments = attachments;
-      }
-
-      const { data } = await smtp2Goapi.sendStandardEmail(emailData);
+      await this.smtp2go.client().consume(mailService);
 
       logger.info('Email sent successfully', { recipients: recipients.length });
       return true;
@@ -175,13 +223,10 @@ class EmailService {
 
   async sendTestEmail() {
     try {
-      const emailData = {
+      const mailService = this.buildMailService({
         to: ['naprikovsky@gmail.com'],
-        custom_headers: [{header: 'Content-Type', value: 'application/json'}],
-        fastaccept: false,
-        sender: 'Booking Price Monitor <info@evo.gl>',
         subject: '🧪 Booking Price Monitor - Test Email',
-        html_body: `
+        html: `
           <html>
             <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h2 style="color: #2c3e50;">✅ Test Email Successful</h2>
@@ -201,10 +246,10 @@ class EmailService {
             </body>
           </html>
         `,
-        text_body: 'Test'
-      };
+        text: 'Test'
+      });
 
-      const { data } = await smtp2Goapi.sendStandardEmail(emailData);
+      const data = await this.smtp2go.client().consume(mailService);
       
       logger.info('Test email API response:', data);
       logger.info('Test email sent successfully');
