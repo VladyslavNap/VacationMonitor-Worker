@@ -17,10 +17,14 @@ class BookingScraper {
       
       // Check if we have saved authentication
       let hasAuth = false;
+      let authContent = null;
       try {
         await fs.access(authFile);
+        const authData = await fs.readFile(authFile, 'utf-8');
+        authContent = JSON.parse(authData);
         hasAuth = true;
-        logger.info('Found saved authentication state');
+        const cookieCount = authContent?.cookies?.length || 0;
+        logger.info(`✅ Found saved authentication state with ${cookieCount} cookies`);
       } catch {
         logger.info('No saved authentication state found');
       }
@@ -41,7 +45,7 @@ class BookingScraper {
       // Load saved auth state if it exists
       if (hasAuth) {
         contextOptions.storageState = authFile;
-        logger.info('Loading saved authentication state');
+        logger.info(`🔐 Loaded authentication state from ${authFile}`);
       }
       
       this.context = await this.browser.newContext(contextOptions);
@@ -348,6 +352,16 @@ class BookingScraper {
    */
   async scrape(criteria) {
     try {
+      // Verify auth state exists before initializing
+      const authFile = path.join(__dirname, '../data/auth-state.json');
+      try {
+        await fs.access(authFile);
+        logger.info('✅ Auth state file found, will be used for worker execution');
+      } catch {
+        logger.warn('⚠️ No auth state file found. Run "npm run save-auth" to save authentication state.');
+        throw new Error('Authentication state file not found. Please run "npm run save-auth" first.');
+      }
+
       await this.initialize();
 
       const searchUrl = this.buildSearchUrlFromCriteria(criteria);

@@ -441,7 +441,24 @@ class CosmosDBService {
   async getConversation(searchId) {
     try {
       const { resource } = await this.containers.conversations.item(searchId, searchId).read();
-      return resource;
+      // Ensure we always return an object with messages property
+      if (resource && typeof resource === 'object') {
+        return {
+          id: resource.id || searchId,
+          searchId: resource.searchId || searchId,
+          messages: Array.isArray(resource.messages) ? resource.messages : [],
+          createdAt: resource.createdAt || new Date().toISOString(),
+          updatedAt: resource.updatedAt || new Date().toISOString()
+        };
+      }
+      // If resource is invalid, return default empty conversation
+      return {
+        id: searchId,
+        searchId: searchId,
+        messages: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
     } catch (error) {
       if (error.code === 404) {
         // Return empty conversation if not exists

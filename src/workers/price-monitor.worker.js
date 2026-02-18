@@ -146,7 +146,15 @@ class PriceMonitorWorker {
       logger.info('Generating AI insights...', { searchId });
       
       // Get conversation history
-      const conversation = await cosmosDBService.getConversation(searchId);
+      let conversation;
+      try {
+        conversation = await cosmosDBService.getConversation(searchId);
+      } catch (error) {
+        logger.warn('Failed to get conversation history, using empty array', { searchId, error: error.message });
+        conversation = { messages: [] };
+      }
+
+      const conversationMessages = conversation?.messages || [];
       
       // Get all price history for this search
       const { prices: allPrices } = await cosmosDBService.getPricesBySearch(searchId, {
@@ -156,7 +164,7 @@ class PriceMonitorWorker {
       // Generate insights from in-memory DB data
       const insights = await this.insightsService.generateInsightsFromData(
         allPrices,
-        conversation.messages,
+        conversationMessages,
         search.criteria
       );
 
