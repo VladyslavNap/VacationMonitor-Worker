@@ -217,10 +217,16 @@ class PriceMonitorWorker {
   /**
    * Handle errors from Service Bus
    */
-  async handleError(error) {
+  async handleError(args) {
+    const serviceBusError = args?.error || args;
+
     logger.error('Service Bus error', {
-      error: error.message,
-      stack: error.stack
+      error: serviceBusError?.message || String(serviceBusError),
+      stack: serviceBusError?.stack,
+      errorSource: args?.errorSource,
+      entityPath: args?.entityPath,
+      fullyQualifiedNamespace: args?.fullyQualifiedNamespace,
+      identifier: args?.identifier
     });
 
     // Implement alerting/monitoring here if needed

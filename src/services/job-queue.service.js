@@ -151,14 +151,20 @@ class JobQueueService {
               await this.receiver.abandonMessage(message);
             }
           },
-          processError: async (error) => {
+          processError: async (args) => {
+            const serviceBusError = args?.error || args;
+
             logger.error('Message processing error', {
-              error: error.message,
-              stack: error.stack
+              error: serviceBusError?.message || String(serviceBusError),
+              stack: serviceBusError?.stack,
+              errorSource: args?.errorSource,
+              entityPath: args?.entityPath,
+              fullyQualifiedNamespace: args?.fullyQualifiedNamespace,
+              identifier: args?.identifier
             });
 
             if (errorHandler) {
-              await errorHandler(error);
+              await errorHandler(args);
             }
           }
         },
