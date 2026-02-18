@@ -1,0 +1,46 @@
+{
+  "name": "vacationmonitor-worker",
+  "version": "1.0.0",
+  "description": "VacationMonitor Worker — Service Bus consumer that scrapes Booking.com, parses prices, generates AI insights, and emails reports",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "worker": "node src/index.js --worker",
+    "cli": "node src/index.js --cli",
+    "dev": "node --watch src/index.js",
+    "dev:worker": "node --watch src/workers/price-monitor.worker.js",
+    "install-browsers": "playwright install",
+    "save-auth": "node scripts/save-auth-state.js",
+    "test-email": "node -e \"import dotenv from 'dotenv'; dotenv.config(); import('./src/email-service.js').then(m => { const service = new m.default(); service.sendTestEmail(); });\"",
+    "test": "echo \"No tests configured yet\" && exit 0"
+  },
+  "keywords": [
+    "booking",
+    "price-monitor",
+    "playwright",
+    "web-scraping",
+    "ai",
+    "worker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@api/smtp2goapi": "file:.api/apis/smtp2goapi",
+    "@azure/cosmos": "^4.0.0",
+    "@azure/service-bus": "^7.9.0",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "csv-parse": "^5.5.0",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "moment": "^2.29.4",
+    "nanoid": "^5.0.4",
+    "playwright": "^1.40.0",
+    "smtp2go-nodejs": "^0.3.6",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
