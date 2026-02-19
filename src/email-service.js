@@ -48,7 +48,7 @@ class EmailService {
     const mailService = this.smtp2go
       .mail()
       .to((to || []).map((email) => ({ email })))
-      .from({ email: 'info@evo.gl', name: 'Booking Price Monitor' })
+      .from({ email: 'vacmon@evo.gl', name: 'Booking Price Monitor' })
       .subject(subject)
       .html(html)
       .text(text)

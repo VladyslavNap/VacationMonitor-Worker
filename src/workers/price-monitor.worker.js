@@ -81,6 +81,7 @@ class PriceMonitorWorker {
       const search = await cosmosDBService.getSearch(searchId, userId);
       
       if (!search) {
+        logger.warn('Search not found, message will be removed from queue', { searchId });
         throw new Error(`Search not found: ${searchId}`);
       }
 

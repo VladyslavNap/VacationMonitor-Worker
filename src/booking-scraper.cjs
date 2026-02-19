@@ -3,6 +3,7 @@ const logger = require('./logger.cjs');
 const config = require('../config/search-config.json');
 const fs = require('fs').promises;
 const path = require('path');
+const BookingURLParser = require('./booking-url-parser.cjs');
 
 class BookingScraper {
   constructor() {
@@ -101,55 +102,8 @@ class BookingScraper {
 
   buildSearchUrl() {
     const { search } = config;
-    const baseUrl = 'https://www.booking.com/searchresults.html';
-    
-    const params = new URLSearchParams({
-      aid: '304142',
-      checkin: search.checkIn,
-      checkout: search.checkOut,
-      dest_id: search.destination,
-      dest_type: search.destinationType || 'region',
-      group_adults: search.adults,
-      req_adults: search.adults,
-      no_rooms: search.rooms,
-      group_children: search.children || 0,
-      req_children: search.children || 0,
-      selected_currency: search.currency,
-      order: search.order || 'price',
-      sb: 1,
-      sb_lp: 1,
-      src: 'searchresults',
-      src_elem: 'sb'
-    });
-
-    if (search.children > 0 && search.childAge) {
-      params.append('age', search.childAge);
-      params.append('req_age', search.childAge);
-    }
-
-    if (search.minPrice) {
-      params.append('nflt', `price%3D${search.currency}-min-${search.minPrice}-1`);
-    }
-
-    if (search.reviewScore) {
-      const existingFilter = params.get('nflt') || '';
-      const reviewFilter = `review_score%3D${search.reviewScore}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${reviewFilter}` : reviewFilter);
-    }
-
-    if (search.mealPlan) {
-      const existingFilter = params.get('nflt') || '';
-      const mealFilter = `mealplan%3D${search.mealPlan}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${mealFilter}` : mealFilter);
-    }
-
-    if (search.stayType) {
-      const existingFilter = params.get('nflt') || '';
-      const stayFilter = `stay_type%3D${search.stayType}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${stayFilter}` : stayFilter);
-    }
-
-    return `${baseUrl}?${params.toString()}`;
+    // Use the BookingURLParser.buildURL method for consistent URL building
+    return BookingURLParser.buildURL(search);
   }
 
   async handleCookieConsent() {
@@ -391,60 +345,13 @@ class BookingScraper {
    * @returns {string} Full Booking.com search URL
    */
   buildSearchUrlFromCriteria(criteria) {
-    const baseUrl = 'https://www.booking.com/searchresults.html';
-
-    const params = new URLSearchParams({
-      aid: '304142',
-      checkin: criteria.checkIn,
-      checkout: criteria.checkOut,
-      dest_id: criteria.destination,
-      dest_type: criteria.destinationType || 'region',
-      group_adults: criteria.adults || 2,
-      req_adults: criteria.adults || 2,
-      no_rooms: criteria.rooms || 1,
-      group_children: criteria.children || 0,
-      req_children: criteria.children || 0,
-      selected_currency: criteria.currency || 'EUR',
-      order: criteria.order || 'price',
-      sb: 1,
-      sb_lp: 1,
-      src: 'searchresults',
-      src_elem: 'sb'
-    });
-
-    if (criteria.children > 0 && criteria.childAges && criteria.childAges.length > 0) {
-      criteria.childAges.forEach(age => {
-        params.append('age', age);
-        params.append('req_age', age);
-      });
-    } else if (criteria.children > 0 && criteria.childAge) {
-      params.append('age', criteria.childAge);
-      params.append('req_age', criteria.childAge);
-    }
-
-    if (criteria.minPrice) {
-      params.append('nflt', `price%3D${criteria.currency || 'EUR'}-min-${criteria.minPrice}-1`);
-    }
-
-    if (criteria.reviewScore) {
-      const existingFilter = params.get('nflt') || '';
-      const reviewFilter = `review_score%3D${criteria.reviewScore}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${reviewFilter}` : reviewFilter);
-    }
-
-    if (criteria.mealPlan) {
-      const existingFilter = params.get('nflt') || '';
-      const mealFilter = `mealplan%3D${criteria.mealPlan}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${mealFilter}` : mealFilter);
-    }
-
-    if (criteria.stayType) {
-      const existingFilter = params.get('nflt') || '';
-      const stayFilter = `stay_type%3D${criteria.stayType}`;
-      params.set('nflt', existingFilter ? `${existingFilter}%3B${stayFilter}` : stayFilter);
-    }
-
-    return `${baseUrl}?${params.toString()}`;
+    // Use the BookingURLParser.buildURL method for consistent URL building
+    // This now handles all enhanced filters including:
+    // - maxPrice (in addition to minPrice) with counterintuitive logic
+    // - childAges array support
+    // - travellingWithPets
+    // - All nflt filters (reviewScore, mealPlan, stayType/ht_id)
+    return BookingURLParser.buildURL(criteria);
   }
 
   async close() {

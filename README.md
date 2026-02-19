@@ -57,6 +57,73 @@ npm run cli
 | `npm run install-browsers` | Install Playwright browser binaries |
 | `npm run save-auth` | Open browser to manually log into Booking.com and save session |
 | `npm run test-email` | Send a test email via SMTP2Go |
+| `npm run test-url-parser` | Run URL parser test suite |
+
+## Enhanced Booking.com URL Parsing
+
+The worker now supports comprehensive URL parsing and building with all Booking.com filters:
+
+### Supported Filters
+
+- **Price Range**: Both `minPrice` and `maxPrice` (counterintuitive logic handled internally)
+- **Review Score**: 60, 70, 80, or 90
+- **Stay Type**: Hotels (204), Apartments (220), Hostels (201), etc.
+- **Meal Plan**: Breakfast (1), Breakfast & dinner (9), All meals (3)
+- **Travelling with Pets**: Boolean flag
+- **Child Ages**: Array of ages (e.g., `[7, 10]` for 2 children)
+
+### Price Filter Logic ⚠️
+
+Booking.com uses **counterintuitive naming** in URLs:
+- `EUR-min-340-1` → **maxPrice only** (not minPrice!)
+- `EUR-max-500-1` → **minPrice only** (not maxPrice!)
+- `EUR-170-340-1` → both minPrice and maxPrice
+
+The parser handles this automatically — just use standard `minPrice` and `maxPrice` in your criteria.
+
+### Criteria Format
+
+```javascript
+{
+  destination: "2647",              // Required: dest_id
+  destinationType: "region",        // Required: dest_type
+  cityName: "Istria Region, Croatia",
+  checkIn: "2026-07-10",           // Required: YYYY-MM-DD
+  checkOut: "2026-07-20",          // Required: YYYY-MM-DD
+  adults: 2,
+  children: 2,
+  childAges: [7, 10],              // Array of child ages
+  rooms: 1,
+  currency: "EUR",
+  minPrice: 170,                   // Optional price range
+  maxPrice: 340,
+  reviewScore: 80,                 // Optional: 60, 70, 80, or 90
+  mealPlan: 9,                     // Optional: 1, 3, or 9
+  stayType: 1,                     // Optional: property type
+  travellingWithPets: true,        // Optional: boolean
+  order: "popularity"              // Or "price"
+}
+```
+
+### Usage
+
+```javascript
+const BookingURLParser = require('./src/booking-url-parser.cjs');
+
+// Parse URL
+const criteria = BookingURLParser.parseURL(bookingURL);
+
+// Build URL
+const url = BookingURLParser.buildURL(criteria);
+
+// Validate
+const validation = BookingURLParser.validateCriteria(criteria);
+if (!validation.valid) {
+  console.error(validation.errors);
+}
+```
+
+See [docs/URL-PARSER.md](docs/URL-PARSER.md) for full documentation and examples.
 
 ## Modes
 

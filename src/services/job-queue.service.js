@@ -147,8 +147,27 @@ class JobQueueService {
                 error: error.message
               });
 
-              // Abandon the message (return to queue for retry)
-              await this.receiver.abandonMessage(message);
+              // Check if this is a non-retryable error (search not found, inactive, etc.)
+              const isNonRetryable = 
+                error.message.includes('Search not found') ||
+                error.message.includes('not found') ||
+                error.message.includes('does not exist');
+
+              if (isNonRetryable) {
+                // Complete the message (remove from queue) - no point retrying
+                logger.warn('Non-retryable error, removing message from queue', {
+                  messageId: message.messageId,
+                  error: error.message
+                });
+                await this.receiver.completeMessage(message);
+              } else {
+                // Abandon the message (return to queue for retry)
+                logger.warn('Retryable error, abandoning message for retry', {
+                  messageId: message.messageId,
+                  error: error.message
+                });
+                await this.receiver.abandonMessage(message);
+              }
             }
           },
           processError: async (args) => {
