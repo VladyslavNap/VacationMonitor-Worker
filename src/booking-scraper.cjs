@@ -212,12 +212,61 @@ class BookingScraper {
             
             const url = card.querySelector('a')?.href || '';
             
+            // NEW: Extract property-type indicators from card
+            // Look for property-type badges/tags, class names, or text patterns
+            const propertyTypes = [];
+            
+            // Strategy 1: Look for property-type specific class names or styling
+            const cardHTML = card.outerHTML.toLowerCase();
+            const propertyTypeKeywords = {
+              'ht_beach': ['beach', 'beachfront', 'beach property'],
+              'ht_city': ['city hotel', 'city center', 'downtown'],
+              'ht_resort': ['resort', 'all-inclusive'],
+              'ht_hotel': ['hotel'],
+              'ht_villa': ['villa', 'villas'],
+              'ht_apartment': ['apartment', 'serviced apartment', 'apart'],
+              'ht_hostel': ['hostel', 'budget'],
+              'ht_motel': ['motel'],
+              'ht_campsite': ['camping', 'campsite', 'glamping'],
+              'ht_house': ['house', 'cottage']
+            };
+            
+            // Check keywords in card text and HTML
+            Object.entries(propertyTypeKeywords).forEach(([htType, keywords]) => {
+              const cardTextLower = (card.textContent || '').toLowerCase();
+              const nameAndLocLower = `${name} ${location}`.toLowerCase();
+              
+              // Check if any keyword matches in visible text or description
+              if (keywords.some(keyword => 
+                cardTextLower.includes(keyword) || cardHTML.includes(keyword)
+              )) {
+                propertyTypes.push(htType);
+              }
+            });
+            
+            // Strategy 2: Look for explicit property-type tags/badges
+            const badges = card.querySelectorAll('[class*="badge"], [class*="tag"], [class*="label"]');
+            badges.forEach(badge => {
+              const badgeText = (badge.textContent || '').toLowerCase();
+              Object.entries(propertyTypeKeywords).forEach(([htType, keywords]) => {
+                if (keywords.some(keyword => badgeText.includes(keyword))) {
+                  if (!propertyTypes.includes(htType)) {
+                    propertyTypes.push(htType);
+                  }
+                }
+              });
+            });
+            
+            // Remove duplicates and sort for consistency
+            const uniqueTypes = [...new Set(propertyTypes)].sort();
+            
             return {
               name,
               price,
               rating,
               location,
               url,
+              propertyTypes: uniqueTypes || [], // NEW: property types found
               extractedAt: new Date().toISOString()
             };
           });
@@ -298,6 +347,46 @@ class BookingScraper {
   }
 
   /**
+   * Filter hotels based on criteria hotel-type filters.
+   * Only returns hotels that match ALL specified hotelTypeFilters (AND logic).
+   * @param {Array} hotels - Array of hotel objects with propertyTypes
+   * @param {Object} criteria - Search criteria with optional hotelTypeFilters
+   * @returns {Array} Filtered array of hotels
+   */
+  filterHotelsByType(hotels, criteria) {
+    // If no hotel-type filters specified, return all hotels
+    if (!criteria.hotelTypeFilters || Object.keys(criteria.hotelTypeFilters).length === 0) {
+      logger.info('No hotel-type filters applied, returning all hotels');
+      return hotels;
+    }
+
+    const requiredFilters = Object.keys(criteria.hotelTypeFilters);
+    logger.info(`Applying hotel-type filters: ${requiredFilters.join(', ')}`);
+
+    const filteredHotels = hotels.filter(hotel => {
+      // A hotel matches if it has at least one matching property type for EACH required filter
+      // Example: if filters are [ht_beach, ht_city], hotel must have propertyTypes containing
+      // both ht_beach AND ht_city (OR logic between similar types, AND logic between different categories)
+      
+      // For simplicity and based on user request: hotel must have ALL required property types
+      const hotelPropertyTypes = hotel.propertyTypes || [];
+      
+      const matchesAllFilters = requiredFilters.every(filter => 
+        hotelPropertyTypes.includes(filter)
+      );
+
+      if (!matchesAllFilters && hotelPropertyTypes.length > 0) {
+        logger.debug(`Hotel "${hotel.name}" filtered out. Has: ${hotelPropertyTypes.join(', ')}, Required: ${requiredFilters.join(', ')}`);
+      }
+
+      return matchesAllFilters;
+    });
+
+    logger.info(`Hotel-type filtering complete: ${filteredHotels.length}/${hotels.length} hotels match filters`);
+    return filteredHotels;
+  }
+
+  /**
    * Scrape Booking.com using dynamic criteria (from DB).
    * Used by the Service Bus worker — criteria come from the search record,
    * not from search-config.json.
@@ -327,8 +416,11 @@ class BookingScraper {
       await this.handleCookieConsent();
       await this.waitForResults();
 
-      const hotels = await this.extractHotelData();
-      logger.info(`Found ${hotels.length} hotels`);
+      let hotels = await this.extractHotelData();
+      logger.info(`Found ${hotels.length} hotels from Booking.com`);
+
+      // Apply hotel-type filters from criteria (NEW)
+      hotels = this.filterHotelsByType(hotels, criteria);
 
       return hotels;
     } catch (error) {

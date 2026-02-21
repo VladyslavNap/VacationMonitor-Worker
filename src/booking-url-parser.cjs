@@ -62,6 +62,9 @@ class BookingURLParser {
         
         travellingWithPets: params.get('travelling_with_pets') === '1',
 
+        // Hotel-type filters (NEW: ht_beach, ht_city, ht_resort, etc.)
+        hotelTypeFilters: nfltFilters.hotelTypeFilters,
+
         // Price filters (with counterintuitive logic)
         minPrice: undefined,
         maxPrice: undefined
@@ -101,7 +104,8 @@ class BookingURLParser {
       reviewScore: undefined,
       mealPlan: undefined,
       stayType: undefined,
-      price: undefined
+      price: undefined,
+      hotelTypeFilters: {} // NEW: hotel-type filters (ht_beach, ht_city, etc.)
     };
 
     if (!nflt) {
@@ -120,7 +124,9 @@ class BookingURLParser {
         
         if (!key || !value) continue;
 
-        switch (key.trim()) {
+        const trimmedKey = key.trim();
+
+        switch (trimmedKey) {
           case 'review_score':
             filters.reviewScore = parseInt(value, 10);
             break;
@@ -143,6 +149,13 @@ class BookingURLParser {
           
           case 'price':
             filters.price = value;
+            break;
+          
+          // NEW: Hotel-type filters (ht_beach, ht_city, ht_resort, ht_villa, etc.)
+          default:
+            if (trimmedKey.startsWith('ht_') && !trimmedKey.includes('_id')) {
+              filters.hotelTypeFilters[trimmedKey] = value;
+            }
             break;
         }
       }
@@ -310,6 +323,13 @@ class BookingURLParser {
       nfltParts.push(`ht_id=${criteria.stayType}`);
     }
 
+    // Hotel-type filters (NEW: ht_beach, ht_city, ht_resort, etc.)
+    if (criteria.hotelTypeFilters && Object.keys(criteria.hotelTypeFilters).length > 0) {
+      Object.entries(criteria.hotelTypeFilters).forEach(([key, value]) => {
+        nfltParts.push(`${key}=${value}`);
+      });
+    }
+
     // Add nflt parameter if we have filters
     if (nfltParts.length > 0) {
       params.append('nflt', nfltParts.join(';'));
@@ -390,6 +410,23 @@ class BookingURLParser {
       const validTypes = [1, 201, 204, 206, 213, 216, 220, 222];
       if (!validTypes.includes(criteria.stayType)) {
         errors.push(`stayType must be one of: ${validTypes.join(', ')}`);
+      }
+    }
+
+    // Hotel-type filters validation (NEW)
+    if (criteria.hotelTypeFilters) {
+      if (typeof criteria.hotelTypeFilters !== 'object' || Array.isArray(criteria.hotelTypeFilters)) {
+        errors.push('hotelTypeFilters must be an object');
+      } else {
+        // Validate each hotel-type filter key/value
+        Object.entries(criteria.hotelTypeFilters).forEach(([key, value]) => {
+          if (!key.startsWith('ht_')) {
+            errors.push(`hotelTypeFilter key "${key}" must start with "ht_"`);
+          }
+          if (value !== '1' && value !== 1) {
+            errors.push(`hotelTypeFilter value for "${key}" must be "1" or 1`);
+          }
+        });
       }
     }
 

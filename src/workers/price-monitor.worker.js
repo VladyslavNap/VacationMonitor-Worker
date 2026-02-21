@@ -93,7 +93,8 @@ class PriceMonitorWorker {
       logger.info('Search configuration loaded', {
         searchId,
         searchName: search.searchName,
-        destination: search.criteria.cityName
+        destination: search.criteria.cityName,
+        hotelTypeFilters: search.criteria.hotelTypeFilters ? Object.keys(search.criteria.hotelTypeFilters) : 'none'
       });
 
       // 2. Scrape Booking.com
