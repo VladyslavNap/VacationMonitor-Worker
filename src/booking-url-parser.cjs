@@ -15,7 +15,7 @@ class BookingURLParser {
   /**
    * Parse a Booking.com URL and extract search criteria
    * @param {string} url - Full Booking.com search URL
-   * @returns {Object} Criteria object with all extracted fields
+   * @returns {Object} Criteria object with all extracted fields and preserved source URL
    */
   static parseURL(url) {
     try {
@@ -27,6 +27,9 @@ class BookingURLParser {
 
       // Extract base criteria
       const criteria = {
+        // IMPORTANT: Preserve the exact source URL for later use (don't rebuild it)
+        sourceUrl: url,
+
         // Destination
         destination: params.get('dest_id') || params.get('ss_raw') || '',
         destinationType: params.get('dest_type') || 'region',
@@ -78,9 +81,9 @@ class BookingURLParser {
         criteria.currency = priceData.currency || criteria.currency;
       }
 
-      // Clean up undefined values
+      // Clean up undefined values (except sourceUrl)
       Object.keys(criteria).forEach(key => {
-        if (criteria[key] === undefined || criteria[key] === 0 || criteria[key] === '') {
+        if (key !== 'sourceUrl' && (criteria[key] === undefined || criteria[key] === 0 || criteria[key] === '')) {
           delete criteria[key];
         }
       });

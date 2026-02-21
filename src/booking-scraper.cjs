@@ -437,12 +437,23 @@ class BookingScraper {
    * @returns {string} Full Booking.com search URL
    */
   buildSearchUrlFromCriteria(criteria) {
-    // Use the BookingURLParser.buildURL method for consistent URL building
+    // IMPORTANT: If the criteria contains a preserved source URL (from a user-pasted URL),
+    // use it exactly as provided instead of rebuilding it. This ensures the exact URL
+    // that the user provided is used for scraping, not a reconstructed version.
+    if (criteria.sourceUrl) {
+      logger.info('Using preserved source URL from criteria (user-provided URL)', {
+        sourceUrl: criteria.sourceUrl.substring(0, 100)
+      });
+      return criteria.sourceUrl;
+    }
+
+    // Fallback: Use the BookingURLParser.buildURL method for consistent URL building
     // This now handles all enhanced filters including:
     // - maxPrice (in addition to minPrice) with counterintuitive logic
     // - childAges array support
     // - travellingWithPets
     // - All nflt filters (reviewScore, mealPlan, stayType/ht_id)
+    logger.info('Building URL from criteria (no source URL provided)');
     return BookingURLParser.buildURL(criteria);
   }
 
