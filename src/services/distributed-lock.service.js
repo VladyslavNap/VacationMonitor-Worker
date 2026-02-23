@@ -82,6 +82,20 @@ class DistributedLockService {
           .item(this.lockName, this.lockName)
           .read();
 
+        if (!existingLock) {
+          // Fallback: create new lock if read returned empty resource
+          const { resource: newLock } = await this.locksContainer.items.create(lockDoc);
+          this.currentLock = newLock;
+          this.startRenewalTimer();
+
+          logger.info('✅ Distributed lock acquired (new - null resource fallback)', {
+            instanceId: this.instanceId,
+            expiresAt: lockDoc.expiresAt
+          });
+
+          return true;
+        }
+
         const lockExpiry = new Date(existingLock.expiresAt);
         const isExpired = lockExpiry < now;
 
@@ -119,7 +133,7 @@ class DistributedLockService {
         return true;
       } catch (error) {
         // Lock doesn't exist yet, try to create it
-        if (error.code === 404) {
+        if (error && error.code === 404) {
           try {
             const { resource: newLock } = await this.locksContainer.items.create(lockDoc);
             this.currentLock = newLock;
@@ -133,26 +147,37 @@ class DistributedLockService {
             return true;
           } catch (createError) {
             // Another instance created the lock at the same time (race condition)
-            if (createError.code === 409) {
+            if (createError && createError.code === 409) {
               logger.debug('Lock created by another instance during race condition');
               return false;
             }
+            logger.error('Unexpected error creating lock', {
+              error: createError?.message || String(createError),
+              code: createError?.code
+            });
             throw createError;
           }
         }
 
         // Precondition failed - another instance updated the lock (race condition)
-        if (error.code === 412) {
+        if (error && error.code === 412) {
           logger.debug('Lock updated by another instance during race condition');
           return false;
         }
 
+        logger.error('Unexpected error reading lock', {
+          error: error?.message || String(error),
+          code: error?.code,
+          hasError: !!error
+        });
         throw error;
       }
     } catch (error) {
       logger.error('Error acquiring distributed lock', {
         instanceId: this.instanceId,
-        error: error.message
+        error: error?.message || String(error),
+        errorCode: error?.code,
+        errorType: error?.constructor?.name
       });
       return false;
     }
@@ -163,6 +188,7 @@ class DistributedLockService {
    */
   async renewLock() {
     if (!this.currentLock) {
+      logger.debug('No current lock to renew');
       return false;
     }
 
@@ -189,7 +215,7 @@ class DistributedLockService {
 
       return true;
     } catch (error) {
-      if (error.code === 412) {
+      if (error && error.code === 412) {
         // Another instance took over the lock
         logger.warn('Lock was taken over by another instance', {
           instanceId: this.instanceId
@@ -201,7 +227,8 @@ class DistributedLockService {
 
       logger.error('Error renewing lock', {
         instanceId: this.instanceId,
-        error: error.message
+        error: error?.message || String(error),
+        errorCode: error?.code
       });
       return false;
     }
@@ -212,6 +239,7 @@ class DistributedLockService {
    */
   async releaseLock() {
     if (!this.currentLock) {
+      logger.debug('No lock to release');
       return;
     }
 
@@ -229,13 +257,14 @@ class DistributedLockService {
 
       this.currentLock = null;
     } catch (error) {
-      if (error.code === 404 || error.code === 412) {
+      if (error && (error.code === 404 || error.code === 412)) {
         // Lock already released or taken over by another instance
         logger.debug('Lock already released or taken over', { instanceId: this.instanceId });
       } else {
         logger.error('Error releasing lock', {
           instanceId: this.instanceId,
-          error: error.message
+          error: error?.message || String(error),
+          errorCode: error?.code
         });
       }
       this.currentLock = null;
