@@ -161,6 +161,152 @@ class EmailService {
       .filter(Boolean);
   }
 
+  getNightsFromCriteria(criteria) {
+    const checkIn = criteria?.checkIn || '';
+    const checkOut = criteria?.checkOut || '';
+    if (!checkIn || !checkOut) {
+      return 0;
+    }
+
+    const diff = new Date(checkOut) - new Date(checkIn);
+    if (Number.isNaN(diff)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.round(diff / 86400000));
+  }
+
+  formatGuestsFromCriteria(criteria) {
+    const adults = Number(criteria?.adults || 0);
+    const children = Number(criteria?.children || 0);
+    const rooms = Number(criteria?.rooms || 1);
+
+    const parts = [`${adults} adult${adults === 1 ? '' : 's'}`];
+    if (children > 0) {
+      parts.push(`${children} child${children === 1 ? '' : 'ren'}`);
+    }
+    if (rooms > 1) {
+      parts.push(`${rooms} rooms`);
+    } else {
+      parts.push('1 room');
+    }
+
+    return parts.join(', ');
+  }
+
+  formatPrice(value, currency) {
+    if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
+      return 'N/A';
+    }
+    const numeric = Math.round(value * 100) / 100;
+    return `${currency} ${numeric.toFixed(2)}`;
+  }
+
+  renderLatestHotelsTable(prices, defaultCurrency) {
+    if (!Array.isArray(prices) || prices.length === 0) {
+      return '<p>No hotels available for this run.</p>';
+    }
+
+    const rows = prices
+      .map((price) => ({
+        name: price.hotelName || 'Unknown Hotel',
+        numericPrice: typeof price.numericPrice === 'number' ? price.numericPrice : Number(price.numericPrice),
+        currency: price.currency || defaultCurrency || 'EUR',
+        url: price.hotelUrl || ''
+      }))
+      .sort((a, b) => {
+        const priceA = Number.isFinite(a.numericPrice) ? a.numericPrice : Number.POSITIVE_INFINITY;
+        const priceB = Number.isFinite(b.numericPrice) ? b.numericPrice : Number.POSITIVE_INFINITY;
+        if (priceA !== priceB) {
+          return priceA - priceB;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+    const rowHtml = rows
+      .map((row) => {
+        const priceText = this.formatPrice(row.numericPrice, row.currency);
+        const nameHtml = row.url
+          ? `<a href="${row.url}" style="color: #1d4ed8; text-decoration: none;">${row.name}</a>`
+          : row.name;
+        const linkHtml = row.url
+          ? `<a href="${row.url}" style="color: #1d4ed8;">View</a>`
+          : 'N/A';
+
+        return `
+          <tr>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0;">${nameHtml}</td>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: right;">${priceText}</td>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: center;">${linkHtml}</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    return `
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead>
+          <tr style="background-color: #f1f5f9;">
+            <th style="text-align: left; padding: 8px 10px;">Hotel</th>
+            <th style="text-align: right; padding: 8px 10px;">Price</th>
+            <th style="text-align: center; padding: 8px 10px;">Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowHtml}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async generateWorkerEmailBody({ searchCriteria, latestPrices, insightsHtml }) {
+    const currentDate = new Date().toLocaleDateString();
+    const criteria = searchCriteria || {};
+    const nights = this.getNightsFromCriteria(criteria);
+    const guestSummary = this.formatGuestsFromCriteria(criteria);
+    const destination = criteria.cityName || criteria.destination || 'Unknown Location';
+    const currency = criteria.currency || 'EUR';
+
+    return `
+      <html>
+        <body style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto;">
+          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+            Booking.com Price Monitor Report
+          </h2>
+
+          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: #34495e; margin-top: 0;">Search Details</h3>
+            <p><strong>Date:</strong> ${currentDate}</p>
+            <p><strong>Destination:</strong> ${destination}</p>
+            <p><strong>Check-in:</strong> ${criteria.checkIn || 'N/A'}</p>
+            <p><strong>Check-out:</strong> ${criteria.checkOut || 'N/A'}</p>
+            <p><strong>Nights:</strong> ${nights || 'N/A'}</p>
+            <p><strong>Guests:</strong> ${guestSummary}</p>
+            <p><strong>Currency:</strong> ${currency}</p>
+          </div>
+
+          <div style="background-color: #ffffff; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #e2e8f0;">
+            <h3 style="color: #1f2937; margin-top: 0;">Latest Hotels</h3>
+            ${this.renderLatestHotelsTable(latestPrices, currency)}
+          </div>
+
+          <div style="background-color: #eef6ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: #1d4ed8; margin-top: 0;">Latest Insights</h3>
+            ${insightsHtml ? insightsHtml : '<p>No insights available for this run.</p>'}
+          </div>
+
+          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1;">
+            <p style="color: #7f8c8d; font-size: 12px;">
+              This report was generated automatically by the Booking.com Price Monitor.
+              <br>
+              For questions or support, please check the application logs.
+            </p>
+          </div>
+        </body>
+      </html>
+    `;
+  }
+
   async generateEmailBody(summary, insightsHtml) {
     let config = {};
     try {

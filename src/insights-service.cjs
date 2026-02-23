@@ -446,8 +446,9 @@ class InsightsService {
       '3) New Hotels (list with name, price, currency, rating, link).',
       '4) Summary Statistics (average price, min/max, hotel count from the provided summary data).',
       '5) Recommendations (2-4 concise bullet points based on trends and value).',
+      'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
       'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
-      'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration).',
+      'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
       'Prices in the data are per night unless stated otherwise.',
       'Keep tone professional and concise. If a section has no data, say "No significant updates".',
       'Inline styles should be minimal and match a light email theme.'

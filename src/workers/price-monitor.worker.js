@@ -184,10 +184,16 @@ class PriceMonitorWorker {
           recipients: search.emailRecipients.length
         });
 
+        const emailHtml = await this.emailService.generateWorkerEmailBody({
+          searchCriteria: search.criteria,
+          latestPrices: priceRecords,
+          insightsHtml: insights.html
+        });
+
         await this.emailService.sendEmail({
           to: search.emailRecipients,
           subject: `Price Monitor: ${search.searchName}`,
-          html: insights.html,
+          html: emailHtml,
           attachments: [] // Could attach CSV if needed
         });
 
