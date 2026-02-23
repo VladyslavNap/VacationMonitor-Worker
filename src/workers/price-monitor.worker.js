@@ -12,6 +12,7 @@ dotenv.config({ path: join(__dirname, '..', '..', '.env') });
 // Import services
 import cosmosDBService from '../services/cosmos-db.service.js';
 import jobQueueService from '../services/job-queue.service.js';
+import schedulerService from '../services/scheduler.service.js';
 import EmailService from '../email-service.js';
 
 // Import core processing modules (CommonJS)
@@ -43,7 +44,10 @@ class PriceMonitorWorker {
       return;
     }
 
-    logger.info('Starting Price Monitor Worker...');
+    logger.info('='.repeat(60));
+    logger.info('VacationMonitor Worker — Job Processor + Scheduler');
+    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info('='.repeat(60));
 
     try {
       // Initialize services
@@ -59,6 +63,15 @@ class PriceMonitorWorker {
       );
 
       logger.info('✅ Price Monitor Worker started and listening for jobs');
+
+      // Start scheduler
+      try {
+        await schedulerService.start();
+        logger.info('✅ Scheduler started successfully');
+      } catch (error) {
+        logger.warn('Scheduler failed to start', { error: error.message });
+        logger.info('Worker is processing jobs but scheduler is offline');
+      }
 
     } catch (error) {
       logger.error('Failed to start worker', { error: error.message, stack: error.stack });
@@ -259,9 +272,18 @@ class PriceMonitorWorker {
     logger.info('Stopping Price Monitor Worker...');
     this.isRunning = false;
 
+    // Stop scheduler first
+    try {
+      await schedulerService.stop();
+      logger.info('Scheduler stopped');
+    } catch (error) {
+      logger.warn('Error stopping scheduler', { error: error.message });
+    }
+
+    // Stop job queue receiver
     await jobQueueService.close();
 
-    logger.info('Price Monitor Worker stopped');
+    logger.info('✅ Price Monitor Worker stopped gracefully');
   }
 }
 
@@ -275,16 +297,35 @@ worker.start().catch(error => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, shutting down worker...');
-  await worker.stop();
-  process.exit(0);
-});
+let gracefulShutdownInProgress = false;
 
-process.on('SIGINT', async () => {
-  logger.info('SIGINT received, shutting down worker...');
-  await worker.stop();
-  process.exit(0);
-});
+async function handleShutdown(signal) {
+  if (gracefulShutdownInProgress) {
+    logger.warn(`${signal} received again, forcing exit`);
+    process.exit(1);
+  }
+
+  gracefulShutdownInProgress = true;
+  logger.info(`${signal} received, initiating graceful shutdown...`);
+
+  const shutdownTimeout = setTimeout(() => {
+    logger.error('Graceful shutdown timeout exceeded (30s), forcing exit');
+    process.exit(1);
+  }, 30000);
+
+  try {
+    await worker.stop();
+    logger.info('✅ Graceful shutdown completed');
+    clearTimeout(shutdownTimeout);
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during graceful shutdown', { error: error.message });
+    clearTimeout(shutdownTimeout);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 export default PriceMonitorWorker;
