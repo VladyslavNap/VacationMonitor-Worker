@@ -314,6 +314,7 @@ class CosmosDBService {
           numericPrice: price.numericPrice,
           currency: price.currency,
           hotelUrl: price.hotelUrl,
+          units: price.units || [],
           extractedAt: price.extractedAt,
           searchDestination: price.searchDestination,
           searchDate: price.searchDate
@@ -337,6 +338,7 @@ class CosmosDBService {
             numericPrice: price.numericPrice,
             currency: price.currency,
             hotelUrl: price.hotelUrl,
+            units: price.units || [],
             extractedAt: price.extractedAt,
             searchDestination: price.searchDestination,
             searchDate: price.searchDate

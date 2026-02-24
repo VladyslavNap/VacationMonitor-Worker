@@ -202,6 +202,57 @@ class EmailService {
     return `${currency} ${numeric.toFixed(2)}`;
   }
 
+  renderPriceSummary(prices, defaultCurrency) {
+    if (!Array.isArray(prices) || prices.length === 0) {
+      return '<p>No data available.</p>';
+    }
+
+    const validPrices = prices
+      .map((p) => (typeof p.numericPrice === 'number' ? p.numericPrice : Number(p.numericPrice)))
+      .filter((v) => Number.isFinite(v) && v > 0);
+
+    if (validPrices.length === 0) {
+      return '<p>No valid prices found.</p>';
+    }
+
+    const currency = defaultCurrency || 'EUR';
+    const min = Math.min(...validPrices);
+    const max = Math.max(...validPrices);
+    const avg = validPrices.reduce((s, v) => s + v, 0) / validPrices.length;
+
+    return `
+      <p><strong>Hotels found:</strong> ${prices.length}</p>
+      <p><strong>Average price:</strong> ${this.formatPrice(avg, currency)}</p>
+      <p><strong>Price range:</strong> ${this.formatPrice(min, currency)} &ndash; ${this.formatPrice(max, currency)}</p>
+    `;
+  }
+
+  formatUnitsSummary(units) {
+    if (!Array.isArray(units) || units.length === 0) {
+      return '';
+    }
+
+    return units.map((unit) => {
+      const parts = [];
+      if (unit.name) parts.push(unit.quantity > 1 ? `${unit.quantity}x ${unit.name}` : unit.name);
+      const details = [];
+      if (unit.bedrooms) details.push(`${unit.bedrooms} bed`);
+      if (unit.bathrooms) details.push(`${unit.bathrooms} bath`);
+      if (unit.area) details.push(`${unit.area} m&sup2;`);
+      if (unit.bedsCount) details.push(`${unit.bedsCount} beds`);
+      if (details.length > 0) parts.push(details.join(', '));
+      return parts.join(' &mdash; ');
+    }).join('<br>');
+  }
+
+  formatRating(rating) {
+    if (!rating) return '';
+    const text = String(rating).trim();
+    const match = text.match(/(\d+[.,]?\d*)/)
+    if (!match) return '';
+    return match[1].replace(',', '.');
+  }
+
   renderLatestHotelsTable(prices, defaultCurrency) {
     if (!Array.isArray(prices) || prices.length === 0) {
       return '<p>No hotels available for this run.</p>';
@@ -212,7 +263,10 @@ class EmailService {
         name: price.hotelName || 'Unknown Hotel',
         numericPrice: typeof price.numericPrice === 'number' ? price.numericPrice : Number(price.numericPrice),
         currency: price.currency || defaultCurrency || 'EUR',
-        url: price.hotelUrl || ''
+        url: price.hotelUrl || '',
+        rating: price.rating || '',
+        location: price.location || '',
+        units: price.units || []
       }))
       .sort((a, b) => {
         const priceA = Number.isFinite(a.numericPrice) ? a.numericPrice : Number.POSITIVE_INFINITY;
@@ -229,15 +283,23 @@ class EmailService {
         const nameHtml = row.url
           ? `<a href="${row.url}" style="color: #1d4ed8; text-decoration: none;">${row.name}</a>`
           : row.name;
-        const linkHtml = row.url
-          ? `<a href="${row.url}" style="color: #1d4ed8;">View</a>`
-          : 'N/A';
+        const locationHtml = row.location
+          ? `<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${row.location}</div>`
+          : '';
+        const unitsSummary = this.formatUnitsSummary(row.units);
+        const unitsHtml = unitsSummary
+          ? `<div style="font-size: 11px; color: #4b5563; margin-top: 3px;">${unitsSummary}</div>`
+          : '';
+        const ratingValue = this.formatRating(row.rating);
+        const ratingHtml = ratingValue
+          ? `<span style="background-color: #1d4ed8; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold;">${ratingValue}</span>`
+          : '<span style="color: #9ca3af;">-</span>';
 
         return `
           <tr>
-            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0;">${nameHtml}</td>
-            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: right;">${priceText}</td>
-            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: center;">${linkHtml}</td>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0;">${nameHtml}${locationHtml}${unitsHtml}</td>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: center; vertical-align: top;">${ratingHtml}</td>
+            <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: right; vertical-align: top; white-space: nowrap;">${priceText}</td>
           </tr>
         `;
       })
@@ -248,8 +310,8 @@ class EmailService {
         <thead>
           <tr style="background-color: #f1f5f9;">
             <th style="text-align: left; padding: 8px 10px;">Hotel</th>
+            <th style="text-align: center; padding: 8px 10px;">Rating</th>
             <th style="text-align: right; padding: 8px 10px;">Price</th>
-            <th style="text-align: center; padding: 8px 10px;">Link</th>
           </tr>
         </thead>
         <tbody>
@@ -285,8 +347,13 @@ class EmailService {
             <p><strong>Currency:</strong> ${currency}</p>
           </div>
 
+          <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: #27ae60; margin-top: 0;">Summary</h3>
+            ${this.renderPriceSummary(latestPrices, currency)}
+          </div>
+
           <div style="background-color: #ffffff; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #e2e8f0;">
-            <h3 style="color: #1f2937; margin-top: 0;">Latest Hotels</h3>
+            <h3 style="color: #1f2937; margin-top: 0;">Latest Hotels (${latestPrices?.length || 0})</h3>
             ${this.renderLatestHotelsTable(latestPrices, currency)}
           </div>
 

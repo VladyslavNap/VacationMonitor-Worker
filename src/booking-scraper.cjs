@@ -146,32 +146,36 @@ class BookingScraper {
         cards => cards.length
       );
 
-      // Scroll to the bottom of the page so lazy-loaded content triggers
+      // First scroll — brings us near the bottom and triggers lazy-loading
       await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await this.page.waitForTimeout(2000);
+      await this.page.waitForTimeout(1500);
+      // Second scroll — page may have reflowed after new cards rendered, scroll to true bottom
+      await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await this.page.waitForTimeout(500);
 
-      // Click the "Load more results" button if it exists
+      // Wait for the load-more button to appear (up to 5 s) instead of checking instantly.
+      // After the first load the button disappears briefly while results render — waitForSelector
+      // gives it time to come back rather than missing it with a one-shot $() check.
       let clicked = false;
       try {
-        const btn = await this.page.$(
+        const btn = await this.page.waitForSelector(
           '[data-testid="pagination-next"], ' +
           'button[aria-label*="more"], ' +
-          'button[class*="load-more"]'
+          'button[class*="load-more"]',
+          { timeout: 5000 }
         );
-        if (btn) {
-          await btn.scrollIntoViewIfNeeded();
-          await btn.click();
-          // Wait for new cards to appear (up to 8 s)
-          await this.page.waitForFunction(
-            (prev) => document.querySelectorAll('[data-testid="property-card"]').length > prev,
-            countBefore,
-            { timeout: 8000 }
-          ).catch(() => {}); // timeout = no new cards loaded
-          clicked = true;
-          logger.info(`Load more clicked (page ${page + 1})`);
-        }
+        await btn.scrollIntoViewIfNeeded();
+        await btn.click();
+        // Wait for new cards to appear (up to 10 s)
+        await this.page.waitForFunction(
+          (prev) => document.querySelectorAll('[data-testid="property-card"]').length > prev,
+          countBefore,
+          { timeout: 10000 }
+        ).catch(() => {}); // timeout = no new cards loaded
+        clicked = true;
+        logger.info(`Load more clicked (page ${page + 1})`);
       } catch {
-        // button not found or not clickable
+        // button did not appear within 5 s — no more results
       }
 
       if (!clicked) {
