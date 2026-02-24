@@ -226,8 +226,8 @@ class CosmosDBService {
         query: `SELECT * FROM c 
                 WHERE c.isActive = true 
                 AND c.schedule.enabled = true 
-                AND c.schedule.nextRun <= @now
-                ORDER BY c.schedule.nextRun ASC
+                AND (NOT DEFINED(c.schedule.nextRun) OR c.schedule.nextRun <= @now)
+                ORDER BY IS_DEFINED(c.schedule.nextRun), c.schedule.nextRun ASC
                 OFFSET 0 LIMIT @limit`,
         parameters: [
           { name: '@now', value: now },

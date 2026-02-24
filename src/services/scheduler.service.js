@@ -168,6 +168,15 @@ class SchedulerService {
       const updatePromises = dueSearches.map(search => {
         const nextRun = new Date(now.getTime() + search.schedule.intervalHours * 60 * 60 * 1000);
         
+        // Log if this is a legacy search without nextRun field
+        if (!search.schedule.nextRun) {
+          logger.info('Initializing nextRun for legacy search', {
+            searchId: search.id,
+            searchName: search.searchName,
+            nextRun: nextRun.toISOString()
+          });
+        }
+        
         // Update the schedule object properly
         const updatedSchedule = {
           ...search.schedule,

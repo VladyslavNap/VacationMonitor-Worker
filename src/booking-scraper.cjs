@@ -419,8 +419,10 @@ class BookingScraper {
       let hotels = await this.extractHotelData();
       logger.info(`Found ${hotels.length} hotels from Booking.com`);
 
-      // Apply hotel-type filters from criteria (NEW)
-      hotels = this.filterHotelsByType(hotels, criteria);
+      // Apply hotel-type filters from criteria only if NOT using a source URL
+      if (!criteria.sourceUrl) {
+        hotels = this.filterHotelsByType(hotels, criteria);
+      }
 
       return hotels;
     } catch (error) {
