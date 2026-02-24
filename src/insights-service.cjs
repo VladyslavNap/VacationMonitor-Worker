@@ -277,7 +277,8 @@ class InsightsService {
       priceText: row.priceText,
       numericPrice: row.numericPrice,
       currency: row.currency,
-      url: row.url
+      url: row.url,
+      units: Array.isArray(row.units) && row.units.length > 0 ? row.units : undefined
     };
   }
 
@@ -449,6 +450,7 @@ class InsightsService {
       'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
       'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
       'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
+      'Each hotel may include a "units" array. Each unit has: name, quantity, bedrooms, bathrooms, livingRooms, kitchens, area (m²), bedsCount, beds (raw text). Use this to highlight room options that best match the group size and trip duration (e.g. apartments with enough bedrooms, kitchens for long stays).',
       'Prices in the data are per night unless stated otherwise.',
       'Keep tone professional and concise. If a section has no data, say "No significant updates".',
       'Inline styles should be minimal and match a light email theme.'
@@ -535,6 +537,7 @@ class InsightsService {
         numericPrice: typeof p.numericPrice === 'number' ? p.numericPrice : this.toNumber(p.numericPrice),
         currency: p.currency || '',
         url: p.hotelUrl || '',
+        units: Array.isArray(p.units) ? p.units : [],
         extractedAt: p.extractedAt || '',
         extractedDate: this.toDateString(p.extractedAt)
       }));

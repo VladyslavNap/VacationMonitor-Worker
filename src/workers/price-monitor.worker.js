@@ -145,6 +145,7 @@ class PriceMonitorWorker {
         numericPrice: hotel.priceParsed?.numericPrice || 0,
         currency: hotel.priceParsed?.currency || search.criteria.currency,
         hotelUrl: hotel.url,
+        units: hotel.units || [],
         extractedAt: extractedAt,
         searchDestination: search.criteria.cityName,
         searchDate: new Date().toISOString()

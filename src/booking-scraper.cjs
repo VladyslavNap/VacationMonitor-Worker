@@ -135,6 +135,30 @@ class BookingScraper {
     try {
       const hotels = await this.page.$$eval('[data-testid="property-card"]', 
         (cards, maxResults) => {
+          // Inline unit parser — pure JS only (no require/imports inside $$eval browser context)
+          const parseUnit = (rawName, rawDetails, rawBeds) => {
+            const quantityMatch = rawName.match(/^(\d+)×\s*/);
+            const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1;
+            const cleanName = rawName.replace(/^\d+×\s*/, '').trim();
+            const bedroomsMatch = rawDetails.match(/(\d+)\s+спальн/i);
+            const bathroomsMatch = rawDetails.match(/(\d+)\s+ванн/i);
+            const livingRoomsMatch = rawDetails.match(/(\d+)\s+вітальн/i);
+            const kitchensMatch = rawDetails.match(/(\d+)\s+кухн/i);
+            const areaMatch = rawDetails.match(/(\d+)\s*m²/i);
+            const bedsCountMatch = rawBeds.match(/^(\d+)/);
+            return {
+              name: cleanName,
+              quantity,
+              bedrooms: bedroomsMatch ? parseInt(bedroomsMatch[1]) : null,
+              bathrooms: bathroomsMatch ? parseInt(bathroomsMatch[1]) : null,
+              livingRooms: livingRoomsMatch ? parseInt(livingRoomsMatch[1]) : null,
+              kitchens: kitchensMatch ? parseInt(kitchensMatch[1]) : null,
+              area: areaMatch ? parseInt(areaMatch[1]) : null,
+              bedsCount: bedsCountMatch ? parseInt(bedsCountMatch[1]) : null,
+              beds: rawBeds || null
+            };
+          };
+
           return cards.slice(0, maxResults).map(card => {
             const name = card.querySelector('[data-testid="title"]')?.textContent?.trim() || '';
             const priceElement = card.querySelector('[data-testid="price-and-discounted-price"]');
@@ -259,7 +283,55 @@ class BookingScraper {
             
             // Remove duplicates and sort for consistency
             const uniqueTypes = [...new Set(propertyTypes)].sort();
-            
+
+            // Extract recommended units from data-testid="recommended-units"
+            const unitsContainer = card.querySelector('[data-testid="recommended-units"]');
+            const units = [];
+
+            if (unitsContainer) {
+              // Strategy 1: structured items via data-testid="recommended-unit"
+              const unitItems = Array.from(unitsContainer.querySelectorAll('[data-testid="recommended-unit"]'));
+              if (unitItems.length > 0) {
+                unitItems.forEach(unitEl => {
+                  const unitLines = (unitEl.textContent || '')
+                    .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                  let nameLine = '', detailsLine = '', bedsLine = '';
+                  for (const line of unitLines) {
+                    if (!nameLine && !line.includes('•') && !/ліжк/i.test(line)) nameLine = line;
+                    else if (!detailsLine && line.includes('•')) detailsLine = line;
+                    else if (!bedsLine && /ліжк/i.test(line) && !line.includes('•')) bedsLine = line;
+                  }
+                  const unit = parseUnit(nameLine, detailsLine, bedsLine);
+                  if (unit.name) units.push(unit);
+                });
+              }
+
+              // Strategy 2: text-line parsing if no structured items found
+              if (units.length === 0) {
+                const lines = (unitsContainer.textContent || '')
+                  .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                const isDetails = l => l.includes('•');
+                const isBeds = l => /ліжк/i.test(l) && !l.includes('•');
+                let i = 0;
+                while (i < lines.length) {
+                  const line = lines[i];
+                  if (isDetails(line) || isBeds(line)) { i++; continue; }
+                  let detailsLine = '', bedsLine = '', advance = 1;
+                  if (i + 1 < lines.length && isDetails(lines[i + 1])) {
+                    detailsLine = lines[i + 1]; advance = 2;
+                    if (i + 2 < lines.length && isBeds(lines[i + 2])) {
+                      bedsLine = lines[i + 2]; advance = 3;
+                    }
+                  } else if (i + 1 < lines.length && isBeds(lines[i + 1])) {
+                    bedsLine = lines[i + 1]; advance = 2;
+                  }
+                  const unit = parseUnit(line, detailsLine, bedsLine);
+                  if (unit.name) units.push(unit);
+                  i += advance;
+                }
+              }
+            }
+
             return {
               name,
               price,
@@ -267,6 +339,7 @@ class BookingScraper {
               location,
               url,
               propertyTypes: uniqueTypes || [], // NEW: property types found
+              units,
               extractedAt: new Date().toISOString()
             };
           });
