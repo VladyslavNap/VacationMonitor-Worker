@@ -95,10 +95,10 @@ const OUT_FILE  = path.join(__dirname, '../data/units-diagnostic.json');
           const quantityMatch = rawName.match(/^(\d+)×\s*/);
           const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1;
           const cleanName = rawName.replace(/^\d+×\s*/, '').trim();
-          const bedroomsMatch = rawDetails.match(/(\d+)\s+спальн/i);
-          const bathroomsMatch = rawDetails.match(/(\d+)\s+ванн/i);
-          const livingRoomsMatch = rawDetails.match(/(\d+)\s+вітальн/i);
-          const kitchensMatch = rawDetails.match(/(\d+)\s+кухн/i);
+          const bedroomsMatch = rawDetails.match(/(\d+)\s+(?:спальн|bedroom)/i);
+          const bathroomsMatch = rawDetails.match(/(\d+)\s+(?:ванн|bathroom|bath\b)/i);
+          const livingRoomsMatch = rawDetails.match(/(\d+)\s+(?:вітальн|living\s*room)/i);
+          const kitchensMatch = rawDetails.match(/(\d+)\s+(?:кухн|kitchen)/i);
           const areaMatch = rawDetails.match(/(\d+)\s*m²/i);
           const bedsCountMatch = rawBeds.match(/^(\d+)/);
           return {
@@ -123,18 +123,36 @@ const OUT_FILE  = path.join(__dirname, '../data/units-diagnostic.json');
           if (unitsContainer) {
             _rawContainerText = unitsContainer.textContent?.substring(0, 500);
 
-            // DOM-aware extraction: h4 = unit name, property-card-unit-configuration = details, sibling = beds
-            const h4Els = Array.from(unitsContainer.querySelectorAll('h4'));
-            h4Els.forEach(h4 => {
-              const rawName = h4.textContent?.trim() || '';
+            // DOM-aware extraction: h3/h4 = unit/room name, property-card-unit-configuration = details, sibling = beds
+            const headingEls = Array.from(unitsContainer.querySelectorAll('h3, h4'));
+            headingEls.forEach(heading => {
+              const rawName = heading.textContent?.trim() || '';
               if (!rawName) return;
-              const parentDiv = h4.parentElement;
+              const parentDiv = heading.parentElement;
               const configEl = parentDiv?.querySelector('[data-testid="property-card-unit-configuration"]');
               const rawDetails = configEl?.textContent?.trim() || '';
               const rawBeds = configEl?.parentElement?.nextElementSibling?.textContent?.trim() || '';
               const unit = parseUnit(rawName, rawDetails, rawBeds);
               if (unit.name) units.push(unit);
             });
+
+            // Fallback: if no headings, find config elements directly
+            if (units.length === 0) {
+              const configEls = Array.from(
+                unitsContainer.querySelectorAll('[data-testid="property-card-unit-configuration"]')
+              );
+              configEls.forEach(configEl => {
+                const container = configEl.closest('li') || configEl.closest('div');
+                const nameEl = container?.querySelector(
+                  'span[role="heading"], strong, b, [class*="title"]'
+                );
+                const rawName = nameEl?.textContent?.trim() || '';
+                const rawDetails = configEl?.textContent?.trim() || '';
+                const rawBeds = configEl?.parentElement?.nextElementSibling?.textContent?.trim() || '';
+                const unit = parseUnit(rawName || rawDetails, rawDetails, rawBeds);
+                if (unit.name) units.push(unit);
+              });
+            }
           }
 
           return {

@@ -215,10 +215,10 @@ class BookingScraper {
             const quantityMatch = rawName.match(/^(\d+)×\s*/);
             const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1;
             const cleanName = rawName.replace(/^\d+×\s*/, '').trim();
-            const bedroomsMatch = rawDetails.match(/(\d+)\s+спальн/i);
-            const bathroomsMatch = rawDetails.match(/(\d+)\s+ванн/i);
-            const livingRoomsMatch = rawDetails.match(/(\d+)\s+вітальн/i);
-            const kitchensMatch = rawDetails.match(/(\d+)\s+кухн/i);
+            const bedroomsMatch = rawDetails.match(/(\d+)\s+(?:спальн|bedroom)/i);
+            const bathroomsMatch = rawDetails.match(/(\d+)\s+(?:ванн|bathroom|bath\b)/i);
+            const livingRoomsMatch = rawDetails.match(/(\d+)\s+(?:вітальн|living\s*room)/i);
+            const kitchensMatch = rawDetails.match(/(\d+)\s+(?:кухн|kitchen)/i);
             const areaMatch = rawDetails.match(/(\d+)\s*m²/i);
             const bedsCountMatch = rawBeds.match(/^(\d+)/);
             return {
@@ -359,30 +359,46 @@ class BookingScraper {
             // Remove duplicates and sort for consistency
             const uniqueTypes = [...new Set(propertyTypes)].sort();
 
-            // Extract recommended units from data-testid="recommended-units"
-            // DOM structure (verified against live page):
-            //   [data-testid="recommended-units"]
-            //     h4                                        ← unit name (one per unit type)
-            //     ul > li:first-child
-            //       span > [data-testid="property-card-unit-configuration"]  ← details (• separated)
-            //       span.nextElementSibling > div or nextSibling div         ← beds text
+            // Extract recommended units / rooms from data-testid="recommended-units"
+            // Works for both apartments (h4 headings) and hotel rooms (h3/span headings).
             const unitsContainer = card.querySelector('[data-testid="recommended-units"]');
             const units = [];
 
             if (unitsContainer) {
-              const h4Els = Array.from(unitsContainer.querySelectorAll('h4'));
-              h4Els.forEach(h4 => {
-                const rawName = h4.textContent?.trim() || '';
+              // Strategy 1: heading elements (h3 for hotel rooms, h4 for apartments)
+              const headingEls = Array.from(
+                unitsContainer.querySelectorAll('h3, h4')
+              );
+              headingEls.forEach(heading => {
+                const rawName = heading.textContent?.trim() || '';
                 if (!rawName) return;
-                const parentDiv = h4.parentElement;
-                // details: the property-card-unit-configuration element
+                const parentDiv = heading.parentElement;
                 const configEl = parentDiv?.querySelector('[data-testid="property-card-unit-configuration"]');
                 const rawDetails = configEl?.textContent?.trim() || '';
-                // beds: the div/element immediately after the span that wraps configEl
                 const rawBeds = configEl?.parentElement?.nextElementSibling?.textContent?.trim() || '';
                 const unit = parseUnit(rawName, rawDetails, rawBeds);
                 if (unit.name) units.push(unit);
               });
+
+              // Strategy 2: if no headings found, locate config elements directly
+              // (some hotel cards show room info without heading tags)
+              if (units.length === 0) {
+                const configEls = Array.from(
+                  unitsContainer.querySelectorAll('[data-testid="property-card-unit-configuration"]')
+                );
+                configEls.forEach(configEl => {
+                  const container = configEl.closest('li') || configEl.closest('div');
+                  // Room name: look for a span with role=heading, or the first bold/span
+                  const nameEl = container?.querySelector(
+                    'span[role="heading"], strong, b, [class*="title"]'
+                  );
+                  const rawName = nameEl?.textContent?.trim() || '';
+                  const rawDetails = configEl?.textContent?.trim() || '';
+                  const rawBeds = configEl?.parentElement?.nextElementSibling?.textContent?.trim() || '';
+                  const unit = parseUnit(rawName || rawDetails, rawDetails, rawBeds);
+                  if (unit.name) units.push(unit);
+                });
+              }
             }
 
             return {
