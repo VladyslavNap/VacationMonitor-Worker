@@ -89,6 +89,7 @@ class BookingScraper {
 
       await this.handleCookieConsent();
       await this.waitForResults();
+      await this.loadAllResults();
 
       const hotels = await this.extractHotelData();
       logger.info(`Found ${hotels.length} hotels`);
@@ -129,6 +130,76 @@ class BookingScraper {
       logger.error('Results not found:', error);
       throw error;
     }
+  }
+
+  /**
+   * Scroll down and click "Load more results" until no new cards appear
+   * or the maxPages limit (from config) is reached.
+   */
+  async loadAllResults() {
+    const maxPages = config.scraping.maxPages || 5;
+    let page = 1;
+
+    while (page < maxPages) {
+      const countBefore = await this.page.$$eval(
+        '[data-testid="property-card"]',
+        cards => cards.length
+      );
+
+      // Scroll to the bottom of the page so lazy-loaded content triggers
+      await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await this.page.waitForTimeout(2000);
+
+      // Click the "Load more results" button if it exists
+      let clicked = false;
+      try {
+        const btn = await this.page.$(
+          '[data-testid="pagination-next"], ' +
+          'button[aria-label*="more"], ' +
+          'button[class*="load-more"]'
+        );
+        if (btn) {
+          await btn.scrollIntoViewIfNeeded();
+          await btn.click();
+          // Wait for new cards to appear (up to 8 s)
+          await this.page.waitForFunction(
+            (prev) => document.querySelectorAll('[data-testid="property-card"]').length > prev,
+            countBefore,
+            { timeout: 8000 }
+          ).catch(() => {}); // timeout = no new cards loaded
+          clicked = true;
+          logger.info(`Load more clicked (page ${page + 1})`);
+        }
+      } catch {
+        // button not found or not clickable
+      }
+
+      if (!clicked) {
+        // No button — scroll one more time and wait briefly for infinite-scroll
+        await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await this.page.waitForTimeout(2500);
+      }
+
+      const countAfter = await this.page.$$eval(
+        '[data-testid="property-card"]',
+        cards => cards.length
+      );
+
+      logger.info(`Load more page ${page}: ${countBefore} → ${countAfter} cards`);
+
+      if (countAfter <= countBefore) {
+        logger.info('No new cards loaded, stopping load-more loop');
+        break;
+      }
+
+      page++;
+    }
+
+    const total = await this.page.$$eval(
+      '[data-testid="property-card"]',
+      cards => cards.length
+    );
+    logger.info(`Load-more complete: ${total} cards available after ${page} page(s)`);
   }
 
   async extractHotelData() {
@@ -285,51 +356,29 @@ class BookingScraper {
             const uniqueTypes = [...new Set(propertyTypes)].sort();
 
             // Extract recommended units from data-testid="recommended-units"
+            // DOM structure (verified against live page):
+            //   [data-testid="recommended-units"]
+            //     h4                                        ← unit name (one per unit type)
+            //     ul > li:first-child
+            //       span > [data-testid="property-card-unit-configuration"]  ← details (• separated)
+            //       span.nextElementSibling > div or nextSibling div         ← beds text
             const unitsContainer = card.querySelector('[data-testid="recommended-units"]');
             const units = [];
 
             if (unitsContainer) {
-              // Strategy 1: structured items via data-testid="recommended-unit"
-              const unitItems = Array.from(unitsContainer.querySelectorAll('[data-testid="recommended-unit"]'));
-              if (unitItems.length > 0) {
-                unitItems.forEach(unitEl => {
-                  const unitLines = (unitEl.textContent || '')
-                    .split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                  let nameLine = '', detailsLine = '', bedsLine = '';
-                  for (const line of unitLines) {
-                    if (!nameLine && !line.includes('•') && !/ліжк/i.test(line)) nameLine = line;
-                    else if (!detailsLine && line.includes('•')) detailsLine = line;
-                    else if (!bedsLine && /ліжк/i.test(line) && !line.includes('•')) bedsLine = line;
-                  }
-                  const unit = parseUnit(nameLine, detailsLine, bedsLine);
-                  if (unit.name) units.push(unit);
-                });
-              }
-
-              // Strategy 2: text-line parsing if no structured items found
-              if (units.length === 0) {
-                const lines = (unitsContainer.textContent || '')
-                  .split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                const isDetails = l => l.includes('•');
-                const isBeds = l => /ліжк/i.test(l) && !l.includes('•');
-                let i = 0;
-                while (i < lines.length) {
-                  const line = lines[i];
-                  if (isDetails(line) || isBeds(line)) { i++; continue; }
-                  let detailsLine = '', bedsLine = '', advance = 1;
-                  if (i + 1 < lines.length && isDetails(lines[i + 1])) {
-                    detailsLine = lines[i + 1]; advance = 2;
-                    if (i + 2 < lines.length && isBeds(lines[i + 2])) {
-                      bedsLine = lines[i + 2]; advance = 3;
-                    }
-                  } else if (i + 1 < lines.length && isBeds(lines[i + 1])) {
-                    bedsLine = lines[i + 1]; advance = 2;
-                  }
-                  const unit = parseUnit(line, detailsLine, bedsLine);
-                  if (unit.name) units.push(unit);
-                  i += advance;
-                }
-              }
+              const h4Els = Array.from(unitsContainer.querySelectorAll('h4'));
+              h4Els.forEach(h4 => {
+                const rawName = h4.textContent?.trim() || '';
+                if (!rawName) return;
+                const parentDiv = h4.parentElement;
+                // details: the property-card-unit-configuration element
+                const configEl = parentDiv?.querySelector('[data-testid="property-card-unit-configuration"]');
+                const rawDetails = configEl?.textContent?.trim() || '';
+                // beds: the div/element immediately after the span that wraps configEl
+                const rawBeds = configEl?.parentElement?.nextElementSibling?.textContent?.trim() || '';
+                const unit = parseUnit(rawName, rawDetails, rawBeds);
+                if (unit.name) units.push(unit);
+              });
             }
 
             return {
@@ -488,6 +537,7 @@ class BookingScraper {
 
       await this.handleCookieConsent();
       await this.waitForResults();
+      await this.loadAllResults();
 
       let hotels = await this.extractHotelData();
       logger.info(`Found ${hotels.length} hotels from Booking.com`);
