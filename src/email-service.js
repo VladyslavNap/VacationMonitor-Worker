@@ -347,6 +347,11 @@ class EmailService {
             <p><strong>Currency:</strong> ${currency}</p>
           </div>
 
+          <div style="background-color: #eef6ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: #1d4ed8; margin-top: 0;">Latest Insights</h3>
+            ${insightsHtml ? insightsHtml : '<p>No insights available for this run.</p>'}
+          </div>
+
           <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <h3 style="color: #27ae60; margin-top: 0;">Summary</h3>
             ${this.renderPriceSummary(latestPrices, currency)}
@@ -355,11 +360,6 @@ class EmailService {
           <div style="background-color: #ffffff; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #e2e8f0;">
             <h3 style="color: #1f2937; margin-top: 0;">Latest Hotels (${latestPrices?.length || 0})</h3>
             ${this.renderLatestHotelsTable(latestPrices, currency)}
-          </div>
-
-          <div style="background-color: #eef6ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #1d4ed8; margin-top: 0;">Latest Insights</h3>
-            ${insightsHtml ? insightsHtml : '<p>No insights available for this run.</p>'}
           </div>
 
           <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1;">
