@@ -66,6 +66,7 @@ class InsightsService {
         totalRuns: runs.length,
         vsLastRun: compareVsPrevious,
         vsAllHistory: compareHistory,
+        fullHistoryAnalytics: this.computeFullHistoryAnalytics(rows, insightsConfig),
         searchContext: this.buildSearchContext(),
         summary: this.computeSummaryStats(latestRun.rows)
       };
@@ -170,6 +171,12 @@ class InsightsService {
     return date.toISOString().slice(0, 10);
   }
 
+  toTimestamp(value) {
+    if (!value) return null;
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
   addDays(dateString, days) {
     if (!dateString) return null;
     const date = new Date(`${dateString}T00:00:00Z`);
@@ -265,6 +272,76 @@ class InsightsService {
     return {
       priceChanges: priceChanges.slice(0, maxPriceChanges),
       newHotels: newHotels.slice(0, maxNewHotels)
+    };
+  }
+
+  computeFullHistoryAnalytics(rows, insightsConfig) {
+    const maxPriceChanges = insightsConfig.maxPriceChanges || DEFAULT_MAX_PRICE_CHANGES;
+    const byHotel = new Map();
+
+    rows.forEach(row => {
+      const key = this.getRowKey(row);
+      if (!key) return;
+      const price = row.numericPrice;
+      if (!price) return;
+
+      const entry = byHotel.get(key) || { minRow: null, maxRow: null };
+      if (!entry.minRow || price < entry.minRow.numericPrice) {
+        entry.minRow = row;
+      }
+      if (!entry.maxRow || price > entry.maxRow.numericPrice) {
+        entry.maxRow = row;
+      }
+      byHotel.set(key, entry);
+    });
+
+    const biggestDrops = [];
+    const biggestIncreases = [];
+
+    byHotel.forEach(({ minRow, maxRow }) => {
+      if (!minRow || !maxRow) return;
+      const minPrice = minRow.numericPrice;
+      const maxPrice = maxRow.numericPrice;
+      if (!minPrice || !maxPrice || minPrice === maxPrice) return;
+
+      const minTime = this.toTimestamp(minRow.extractedAt);
+      const maxTime = this.toTimestamp(maxRow.extractedAt);
+
+      const increaseItem = this.buildHistoryChangeItem(minRow, maxRow);
+      const dropItem = this.buildHistoryChangeItem(maxRow, minRow);
+
+      if (minTime && maxTime) {
+        if (maxTime > minTime) {
+          biggestIncreases.push(increaseItem);
+        } else if (minTime > maxTime) {
+          biggestDrops.push(dropItem);
+        } else {
+          biggestIncreases.push(increaseItem);
+          biggestDrops.push(dropItem);
+        }
+      } else {
+        biggestIncreases.push(increaseItem);
+        biggestDrops.push(dropItem);
+      }
+    });
+
+    biggestIncreases.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    biggestDrops.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+
+    return {
+      biggestDrops: biggestDrops.slice(0, maxPriceChanges),
+      biggestIncreases: biggestIncreases.slice(0, maxPriceChanges)
+    };
+  }
+
+  buildHistoryChangeItem(previousRow, currentRow) {
+    return {
+      ...this.pickHotelFields(currentRow),
+      previousPrice: previousRow.numericPrice,
+      currentPrice: currentRow.numericPrice,
+      change: currentRow.numericPrice - previousRow.numericPrice,
+      previousAt: previousRow.extractedAt || null,
+      currentAt: currentRow.extractedAt || null
     };
   }
 
@@ -443,12 +520,14 @@ class InsightsService {
       'Return HTML only, no markdown, no code fences, and no outer <html> or <body> tags.',
       'Use a consistent structure with the following sections in this order:',
       '1) Latest Updates (include Latest Run vs Previous Run and Latest Run vs Full History subheadings).',
-      '2) Price Changes (table or list with hotel name, previous price, current price, change, currency).',
-      '3) New Hotels (list with name, price, currency, rating, link).',
-      '4) Summary Statistics (average price, min/max, hotel count from the provided summary data).',
-      '5) Recommendations (2-4 concise bullet points based on trends and value).',
+      '2) Full History Analytics (include Biggest Price Drops and Biggest Price Increases subheadings).',
+      '3) Price Changes (table or list with hotel name, previous price, current price, change, currency).',
+      '4) New Hotels (list with name, price, currency, rating, link).',
+      '5) Summary Statistics (average price, min/max, hotel count from the provided summary data).',
+      '6) Recommendations (2-4 concise bullet points based on trends and value).',
       'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
       'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
+      'The payload includes fullHistoryAnalytics with biggestDrops and biggestIncreases across all runs.',
       'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
       'Each hotel may include a "units" array. Each unit has: name, quantity, bedrooms, bathrooms, livingRooms, kitchens, area (m²), bedsCount, beds (raw text). Use this to highlight room options that best match the group size and trip duration (e.g. apartments with enough bedrooms, kitchens for long stays).',
       'Prices in the data are per night unless stated otherwise.',
@@ -586,6 +665,7 @@ class InsightsService {
         totalRuns: runs.length,
         vsLastRun: compareVsPrevious,
         vsAllHistory: compareHistory,
+        fullHistoryAnalytics: this.computeFullHistoryAnalytics(rows, insightsConfig),
         searchContext,
         summary: this.computeSummaryStats(latestRun.rows)
       };
