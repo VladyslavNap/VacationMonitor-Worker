@@ -271,41 +271,7 @@ class InsightsService {
 
     return {
       priceChanges: priceChanges.slice(0, maxPriceChanges),
-      newHotels: newHotels.slice(0, maxNewHotels),
-      latestExtremes: this.computePriceExtremes(latestRows),
-      baselineExtremes: this.computePriceExtremes(baselineRows)
-    };
-  }
-
-  computePriceExtremes(rows) {
-    const validRows = Array.isArray(rows)
-      ? rows.filter(row => row && row.numericPrice > 0)
-      : [];
-
-    if (!validRows.length) {
-      return {
-        highest: null,
-        lowest: null
-      };
-    }
-
-    const highestRow = validRows.reduce((best, row) => {
-      return row.numericPrice > best.numericPrice ? row : best;
-    }, validRows[0]);
-
-    const lowestRow = validRows.reduce((best, row) => {
-      return row.numericPrice < best.numericPrice ? row : best;
-    }, validRows[0]);
-
-    const toExtremeItem = row => ({
-      ...this.pickHotelFields(row),
-      extractedAt: row.extractedAt || null,
-      extractedDate: row.extractedDate || this.toDateString(row.extractedAt)
-    });
-
-    return {
-      highest: toExtremeItem(highestRow),
-      lowest: toExtremeItem(lowestRow)
+      newHotels: newHotels.slice(0, maxNewHotels)
     };
   }
 
@@ -364,8 +330,7 @@ class InsightsService {
 
     return {
       biggestDrops: biggestDrops.slice(0, maxPriceChanges),
-      biggestIncreases: biggestIncreases.slice(0, maxPriceChanges),
-      overallExtremes: this.computePriceExtremes(rows)
+      biggestIncreases: biggestIncreases.slice(0, maxPriceChanges)
     };
   }
 
@@ -555,16 +520,15 @@ class InsightsService {
       'Return HTML only, no markdown, no code fences, and no outer <html> or <body> tags.',
       'Use a consistent structure with the following sections in this order:',
       '1) Latest Updates (include Latest Run vs Previous Run and Latest Run vs Full History subheadings).',
-      '2) Full History Analytics (include Biggest Price Drops and Biggest Price Increases subheadings).',
-      '3) Price Changes (table or list with hotel name, previous price, current price, change, currency).',
+      '2) Full History Analytics (include Biggest Price Drops and Biggest Price Increases subheadings; for each entry show the previous price with its date and the current price with its date, e.g. "EUR 120 on 2026-04-10 -> EUR 95 on 2026-04-20").',
+      '3) Price Changes (table or list with hotel name, previous price, current price, change, currency; no dates).',
       '4) New Hotels (list with name, price, currency, rating, link).',
       '5) Summary Statistics (average price, min/max, hotel count from the provided summary data).',
       '6) Recommendations (2-4 concise bullet points based on trends and value).',
       'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
       'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
-      'For both Latest Run vs Previous Run and Latest Run vs Full History, explicitly include the highest and lowest observed prices and their dates, using vsLastRun.latestExtremes/baselineExtremes and vsAllHistory.latestExtremes/baselineExtremes.',
       'The payload includes fullHistoryAnalytics with biggestDrops and biggestIncreases across all runs.',
-      'In Full History Analytics, include overall historical highest and lowest prices with their dates from fullHistoryAnalytics.overallExtremes.',
+      'In section 2 Full History Analytics, for every item in biggestDrops and biggestIncreases render the date the previous price was observed (field previousAt) and the date the current price was observed (field currentAt) next to the corresponding prices (e.g. "EUR 120 on 2026-04-10 -> EUR 95 on 2026-04-20").',
       'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
       'Each hotel may include a "units" array. Each unit has: name, quantity, bedrooms, bathrooms, livingRooms, kitchens, area (m²), bedsCount, beds (raw text). Use this to highlight room options that best match the group size and trip duration (e.g. apartments with enough bedrooms, kitchens for long stays).',
       'Prices in the data are per night unless stated otherwise.',
