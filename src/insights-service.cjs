@@ -271,7 +271,41 @@ class InsightsService {
 
     return {
       priceChanges: priceChanges.slice(0, maxPriceChanges),
-      newHotels: newHotels.slice(0, maxNewHotels)
+      newHotels: newHotels.slice(0, maxNewHotels),
+      latestExtremes: this.computePriceExtremes(latestRows),
+      baselineExtremes: this.computePriceExtremes(baselineRows)
+    };
+  }
+
+  computePriceExtremes(rows) {
+    const validRows = Array.isArray(rows)
+      ? rows.filter(row => row && row.numericPrice > 0)
+      : [];
+
+    if (!validRows.length) {
+      return {
+        highest: null,
+        lowest: null
+      };
+    }
+
+    const highestRow = validRows.reduce((best, row) => {
+      return row.numericPrice > best.numericPrice ? row : best;
+    }, validRows[0]);
+
+    const lowestRow = validRows.reduce((best, row) => {
+      return row.numericPrice < best.numericPrice ? row : best;
+    }, validRows[0]);
+
+    const toExtremeItem = row => ({
+      ...this.pickHotelFields(row),
+      extractedAt: row.extractedAt || null,
+      extractedDate: row.extractedDate || this.toDateString(row.extractedAt)
+    });
+
+    return {
+      highest: toExtremeItem(highestRow),
+      lowest: toExtremeItem(lowestRow)
     };
   }
 
@@ -330,7 +364,8 @@ class InsightsService {
 
     return {
       biggestDrops: biggestDrops.slice(0, maxPriceChanges),
-      biggestIncreases: biggestIncreases.slice(0, maxPriceChanges)
+      biggestIncreases: biggestIncreases.slice(0, maxPriceChanges),
+      overallExtremes: this.computePriceExtremes(rows)
     };
   }
 
@@ -527,7 +562,9 @@ class InsightsService {
       '6) Recommendations (2-4 concise bullet points based on trends and value).',
       'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
       'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
+      'For both Latest Run vs Previous Run and Latest Run vs Full History, explicitly include the highest and lowest observed prices and their dates, using vsLastRun.latestExtremes/baselineExtremes and vsAllHistory.latestExtremes/baselineExtremes.',
       'The payload includes fullHistoryAnalytics with biggestDrops and biggestIncreases across all runs.',
+      'In Full History Analytics, include overall historical highest and lowest prices with their dates from fullHistoryAnalytics.overallExtremes.',
       'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
       'Each hotel may include a "units" array. Each unit has: name, quantity, bedrooms, bathrooms, livingRooms, kitchens, area (m²), bedsCount, beds (raw text). Use this to highlight room options that best match the group size and trip duration (e.g. apartments with enough bedrooms, kitchens for long stays).',
       'Prices in the data are per night unless stated otherwise.',
