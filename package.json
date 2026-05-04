@@ -14,6 +14,7 @@
     "save-auth": "node scripts/save-auth-state.js",
     "test-email": "node -e \"import dotenv from 'dotenv'; dotenv.config(); import('./src/email-service.js').then(m => { const service = new m.default(); service.sendTestEmail(); });\"",
     "test-url-parser": "node scripts/test-url-parser.cjs",
+    "test-report-format": "node scripts/test-report-format.cjs",
     "test": "echo \"No tests configured yet\" && exit 0"
   },
   "keywords": [

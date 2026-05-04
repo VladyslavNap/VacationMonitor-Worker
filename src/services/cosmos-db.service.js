@@ -303,6 +303,7 @@ class CosmosDBService {
         operationType: 'Create',
         resourceBody: {
           id: price.id,
+          runId: price.runId,
           searchId: price.searchId, // Partition key
           userId: price.userId,
           hotelName: price.hotelName,
@@ -315,6 +316,7 @@ class CosmosDBService {
           currency: price.currency,
           hotelUrl: price.hotelUrl,
           units: price.units || [],
+          propertyTypes: price.propertyTypes || [],
           extractedAt: price.extractedAt,
           searchDestination: price.searchDestination,
           searchDate: price.searchDate
@@ -327,6 +329,7 @@ class CosmosDBService {
         prices.map(price => 
           this.containers.prices.items.create({
             id: price.id,
+            runId: price.runId,
             searchId: price.searchId,
             userId: price.userId,
             hotelName: price.hotelName,
@@ -339,6 +342,7 @@ class CosmosDBService {
             currency: price.currency,
             hotelUrl: price.hotelUrl,
             units: price.units || [],
+            propertyTypes: price.propertyTypes || [],
             extractedAt: price.extractedAt,
             searchDestination: price.searchDestination,
             searchDate: price.searchDate

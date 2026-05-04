@@ -2,11 +2,19 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const logger = require('./logger.cjs');
+const {
+  buildReportViewModel,
+  buildDeterministicInsights,
+  buildAiPayload,
+  normalizeUnits,
+  normalizeArray
+} = require('./report-data.cjs');
 
 const DEFAULT_MAX_HISTORY_ROWS = 2000;
 const DEFAULT_MAX_PRICE_CHANGES = 10;
 const DEFAULT_MAX_NEW_HOTELS = 10;
 const DEFAULT_MAX_MESSAGE_PAIRS = 12;
+const DEFAULT_MAX_COMPLETION_TOKENS = 5000;
 
 class InsightsService {
   constructor() {
@@ -32,47 +40,31 @@ class InsightsService {
     const apiKey = process.env.AZURE_OPENAI_API_KEY;
     const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
 
-    if (!enabled || !apiKey || !endpoint) {
-      logger.info('Insights disabled or Azure OpenAI config missing, skipping insights');
-      return null;
-    }
-
     try {
       const rows = await this.loadCsvRows(csvPath, insightsConfig.maxHistoryRows || DEFAULT_MAX_HISTORY_ROWS);
       if (!rows.length) {
         logger.warn('No CSV rows available for insights');
-        return null;
+        const emptyReport = buildReportViewModel({ searchCriteria: this.buildSearchContext() });
+        return this.buildInsightsResult(emptyReport, null, 'deterministic');
       }
 
-      const runs = this.groupRowsByRun(rows);
-      if (!runs.length) {
-        logger.warn('No run data available for insights');
-        return null;
+      const report = buildReportViewModel({
+        priceRecords: rows,
+        searchCriteria: this.buildSearchContext(),
+        options: { displayLimit: insightsConfig.maxPriceChanges || DEFAULT_MAX_PRICE_CHANGES }
+      });
+
+      if (!enabled || !apiKey || !endpoint) {
+        logger.info('Insights disabled or Azure OpenAI config missing, using deterministic insights');
+        return this.buildInsightsResult(report, null, 'deterministic');
       }
 
-      const latestRun = runs[0];
-      const previousRun = runs.length > 1 ? runs[1] : { rows: [], timestamp: null };
-      const historyRows = runs.slice(1).flatMap(r => r.rows);
-
-      const compareVsPrevious = this.compareRuns(latestRun.rows, previousRun.rows, insightsConfig);
-      const compareHistory = this.compareRuns(latestRun.rows, historyRows, insightsConfig);
-
-      const payload = {
-        latestTimestamp: latestRun.timestamp,
-        previousTimestamp: previousRun.timestamp,
-        latestCount: latestRun.rows.length,
-        previousCount: previousRun.rows.length,
-        historyCount: historyRows.length,
-        totalRuns: runs.length,
-        vsLastRun: compareVsPrevious,
-        vsAllHistory: compareHistory,
-        fullHistoryAnalytics: this.computeFullHistoryAnalytics(rows, insightsConfig),
-        searchContext: this.buildSearchContext(),
-        summary: this.computeSummaryStats(latestRun.rows)
-      };
-
-      const html = await this.callAzureOpenAI(endpoint, apiKey, payload, insightsConfig);
-      return html;
+      const payload = buildAiPayload(report, {
+        aiMovementLimit: insightsConfig.maxPriceChanges || DEFAULT_MAX_PRICE_CHANGES,
+        aiHotelLimit: insightsConfig.maxHotelsInPrompt || 25
+      });
+      const structured = await this.callAzureOpenAI(endpoint, apiKey, payload, insightsConfig, buildDeterministicInsights(report));
+      return this.buildInsightsResult(report, structured, 'ai');
     } catch (error) {
       logger.error('Failed to generate insights:', error);
       return null;
@@ -153,6 +145,9 @@ class InsightsService {
       numericPrice: this.toNumber(row['Numeric Price']),
       currency: row['Currency'] || '',
       url: row['Hotel URL'] || '',
+      units: normalizeUnits(row['Units JSON'] || row['Units Summary'] || ''),
+      unitsSummary: row['Units Summary'] || '',
+      propertyTypes: normalizeArray(row['Property Types'] || ''),
       extractedAt,
       extractedDate
     };
@@ -378,7 +373,7 @@ class InsightsService {
     }
   }
 
-  async callAzureOpenAI(endpoint, apiKey, payload, insightsConfig) {
+  async callAzureOpenAI(endpoint, apiKey, payload, insightsConfig, fallbackInsights) {
     const threadId = process.env.AZURE_OPENAI_THREAD_ID;
     if (!threadId) {
       logger.warn('AZURE_OPENAI_THREAD_ID not set, cannot maintain conversation history');
@@ -400,7 +395,7 @@ class InsightsService {
       body: JSON.stringify({
         messages,
         temperature: 0.2,
-        max_completion_tokens: 78000
+        max_completion_tokens: this.getMaxCompletionTokens(insightsConfig)
       })
     });
 
@@ -434,11 +429,13 @@ class InsightsService {
       throw new Error('Azure OpenAI response missing content');
     }
 
+    const structured = this.parseStructuredInsights(content, fallbackInsights);
+
     if (threadId) {
-      await this.saveConversation(threadId, [...history, { role: 'user', content: JSON.stringify(payload) }, { role: 'assistant', content }], insightsConfig);
+      await this.saveConversation(threadId, [...history, { role: 'user', content: JSON.stringify(payload) }, { role: 'assistant', content: JSON.stringify(structured) }], insightsConfig);
     }
 
-    return content;
+    return structured;
   }
 
   extractContent(data) {
@@ -514,26 +511,92 @@ class InsightsService {
     }
   }
 
+  getMaxCompletionTokens(insightsConfig = {}) {
+    const configured = Number(insightsConfig.maxCompletionTokens || insightsConfig.maxTokens || 0);
+    return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_COMPLETION_TOKENS;
+  }
+
+  stripJsonFences(content) {
+    return String(content || '')
+      .trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+  }
+
+  normalizeTextArray(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+    return [];
+  }
+
+  parseStructuredInsights(content, fallbackInsights) {
+    try {
+      const parsed = JSON.parse(this.stripJsonFences(content));
+      return this.validateStructuredInsights(parsed, fallbackInsights);
+    } catch (error) {
+      logger.warn('Failed to parse structured AI insights, using deterministic fallback', { error: error.message });
+      return fallbackInsights;
+    }
+  }
+
+  validateStructuredInsights(value, fallbackInsights) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const fallback = fallbackInsights || {};
+    const bestFit = source.bestFitHotel && typeof source.bestFitHotel === 'object'
+      ? {
+          name: String(source.bestFitHotel.name || '').trim(),
+          reason: String(source.bestFitHotel.reason || '').trim()
+        }
+      : fallback.bestFitHotel || null;
+
+    return {
+      headline: String(source.headline || fallback.headline || '').trim(),
+      briefSummary: String(source.briefSummary || fallback.briefSummary || '').trim(),
+      latestUpdates: this.normalizeTextArray(source.latestUpdates).length
+        ? this.normalizeTextArray(source.latestUpdates)
+        : this.normalizeTextArray(fallback.latestUpdates),
+      historyHighlights: this.normalizeTextArray(source.historyHighlights).length
+        ? this.normalizeTextArray(source.historyHighlights)
+        : this.normalizeTextArray(fallback.historyHighlights),
+      recommendations: this.normalizeTextArray(source.recommendations).length
+        ? this.normalizeTextArray(source.recommendations).slice(0, 5)
+        : this.normalizeTextArray(fallback.recommendations).slice(0, 5),
+      bestFitHotel: bestFit && bestFit.name ? bestFit : null,
+      dataNotes: this.normalizeTextArray(source.dataNotes).length
+        ? this.normalizeTextArray(source.dataNotes)
+        : this.normalizeTextArray(fallback.dataNotes)
+    };
+  }
+
+  buildInsightsResult(report, structured, source) {
+    const insights = structured || buildDeterministicInsights(report);
+    return {
+      html: null,
+      structured: insights,
+      insights,
+      report,
+      source
+    };
+  }
+
   buildSystemPrompt() {
     return [
-      'You are generating an HTML fragment for a Booking.com price monitor email report.',
-      'Return HTML only, no markdown, no code fences, and no outer <html> or <body> tags.',
-      'Use a consistent structure with the following sections in this order:',
-      '1) Latest Updates (include Latest Run vs Previous Run and Latest Run vs Full History subheadings).',
-      '2) Full History Analytics (include Biggest Price Drops and Biggest Price Increases subheadings; for each entry show the previous price with its date and the current price with its date, e.g. "EUR 120 on 2026-04-10 -> EUR 95 on 2026-04-20").',
-      '3) Price Changes (table or list with hotel name, previous price, current price, change, currency; no dates).',
-      '4) New Hotels (list with name, price, currency, rating, link).',
-      '5) Summary Statistics (average price, min/max, hotel count from the provided summary data).',
-      '6) Recommendations (2-4 concise bullet points based on trends and value).',
-      'Include one recommendation that explicitly names the best-fit hotel for this group and stay duration.',
-      'The payload includes a searchContext object with destination, check-in/check-out dates, number of nights, guests, and currency.',
-      'The payload includes fullHistoryAnalytics with biggestDrops and biggestIncreases across all runs.',
-      'In section 2 Full History Analytics, for every item in biggestDrops and biggestIncreases render the date the previous price was observed (field previousAt) and the date the current price was observed (field currentAt) next to the corresponding prices (e.g. "EUR 120 on 2026-04-10 -> EUR 95 on 2026-04-20").',
-      'Use the searchContext to make recommendations specific to the trip (e.g., mention the destination, stay duration, group size).',
-      'Each hotel may include a "units" array. Each unit has: name, quantity, bedrooms, bathrooms, livingRooms, kitchens, area (m²), bedsCount, beds (raw text). Use this to highlight room options that best match the group size and trip duration (e.g. apartments with enough bedrooms, kitchens for long stays).',
-      'Prices in the data are per night unless stated otherwise.',
-      'Keep tone professional and concise. If a section has no data, say "No significant updates".',
-      'Inline styles should be minimal and match a light email theme.'
+      'You generate structured insight content for a Booking.com price monitor email report.',
+      'Return JSON only. Do not return markdown, code fences, HTML, XML, or explanatory text.',
+      'Use exactly this JSON object shape:',
+      '{"headline":"string","briefSummary":"string","latestUpdates":["string"],"historyHighlights":["string"],"recommendations":["string"],"bestFitHotel":{"name":"string","reason":"string"},"dataNotes":["string"]}.',
+      'Keep all text concise and professional.',
+      'Use only hotel names, prices, dates, ratings, locations, and room details present in the payload. Do not invent facts.',
+      'The application will render final HTML, so do not include tags or inline styles.',
+      'Mention the destination, stay duration, group size, and useful unit/room details when they matter.',
+      'Recommendations should be actionable and should include one best-fit hotel for the group and stay duration when priced hotel data exists.',
+      'If there is no previous run or no significant movement, say that clearly instead of manufacturing changes.'
     ].join(' ');
   }
 
@@ -595,83 +658,34 @@ class InsightsService {
     const enabled = insightsConfig.enabled !== false;
     const apiKey = process.env.AZURE_OPENAI_API_KEY;
     const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-
-    if (!enabled || !apiKey || !endpoint) {
-      logger.info('Insights disabled or Azure OpenAI config missing, skipping insights');
-      return { html: null, conversation: conversationMessages || [] };
-    }
+    const report = buildReportViewModel({
+      priceRecords: priceRecords || [],
+      searchCriteria: searchCriteria || {},
+      options: { displayLimit: insightsConfig.maxPriceChanges || DEFAULT_MAX_PRICE_CHANGES }
+    });
 
     try {
       if (!priceRecords || priceRecords.length === 0) {
         logger.warn('No price records available for insights');
-        return { html: null, conversation: conversationMessages || [] };
+        return {
+          ...this.buildInsightsResult(report, null, 'deterministic'),
+          conversation: conversationMessages || []
+        };
       }
 
-      // Normalize DB records into the same shape the CSV-based code uses
-      const rows = priceRecords.map(p => ({
-        name: p.hotelName || '',
-        rating: p.rating || '',
-        location: p.location || '',
-        cityName: p.cityName || '',
-        priceText: p.originalPriceText || '',
-        numericPrice: typeof p.numericPrice === 'number' ? p.numericPrice : this.toNumber(p.numericPrice),
-        currency: p.currency || '',
-        url: p.hotelUrl || '',
-        units: Array.isArray(p.units) ? p.units : [],
-        extractedAt: p.extractedAt || '',
-        extractedDate: this.toDateString(p.extractedAt)
-      }));
-
-      const runs = this.groupRowsByRun(rows);
-      if (!runs.length) {
-        logger.warn('No run data available for insights');
-        return { html: null, conversation: conversationMessages || [] };
+      if (!enabled || !apiKey || !endpoint) {
+        logger.info('Insights disabled or Azure OpenAI config missing, using deterministic insights');
+        return {
+          ...this.buildInsightsResult(report, null, 'deterministic'),
+          conversation: conversationMessages || []
+        };
       }
 
-      const latestRun = runs[0];
-      const previousRun = runs.length > 1 ? runs[1] : { rows: [], timestamp: null };
-      const historyRows = runs.slice(1).flatMap(r => r.rows);
+      const payload = buildAiPayload(report, {
+        aiMovementLimit: insightsConfig.maxPriceChanges || DEFAULT_MAX_PRICE_CHANGES,
+        aiHotelLimit: insightsConfig.maxHotelsInPrompt || 25
+      });
 
-      const compareVsPrevious = this.compareRuns(latestRun.rows, previousRun.rows, insightsConfig);
-      const compareHistory = this.compareRuns(latestRun.rows, historyRows, insightsConfig);
-
-      // Build search context from the DB criteria instead of config file
-      const checkIn = searchCriteria.checkIn || '';
-      const checkOut = searchCriteria.checkOut || '';
-      let nights = 0;
-      if (checkIn && checkOut) {
-        const diff = new Date(checkOut) - new Date(checkIn);
-        nights = Math.max(0, Math.round(diff / 86400000));
-      }
-      const searchContext = {
-        destination: searchCriteria.cityName || searchCriteria.destination || '',
-        checkIn,
-        checkOut,
-        nights,
-        adults: searchCriteria.adults || 0,
-        children: searchCriteria.children || 0,
-        childAge: searchCriteria.childAge || null,
-        rooms: searchCriteria.rooms || 1,
-        currency: searchCriteria.currency || 'EUR',
-        minPriceFilter: searchCriteria.minPrice || null,
-        mealPlan: searchCriteria.mealPlan || null
-      };
-
-      const payload = {
-        latestTimestamp: latestRun.timestamp,
-        previousTimestamp: previousRun.timestamp,
-        latestCount: latestRun.rows.length,
-        previousCount: previousRun.rows.length,
-        historyCount: historyRows.length,
-        totalRuns: runs.length,
-        vsLastRun: compareVsPrevious,
-        vsAllHistory: compareHistory,
-        fullHistoryAnalytics: this.computeFullHistoryAnalytics(rows, insightsConfig),
-        searchContext,
-        summary: this.computeSummaryStats(latestRun.rows)
-      };
-
-      // Use the conversation messages from DB instead of the local file
       const history = conversationMessages || [];
       const systemMessage = {
         role: 'system',
@@ -692,7 +706,7 @@ class InsightsService {
         body: JSON.stringify({
           messages,
           temperature: 0.2,
-          max_completion_tokens: 78000
+          max_completion_tokens: this.getMaxCompletionTokens(insightsConfig)
         })
       });
 
@@ -709,11 +723,13 @@ class InsightsService {
         throw new Error('Azure OpenAI response missing content');
       }
 
+      const structured = this.parseStructuredInsights(content, buildDeterministicInsights(report));
+
       // Build updated conversation
       const updatedConversation = [
         ...history,
         { role: 'user', content: JSON.stringify(payload) },
-        { role: 'assistant', content }
+        { role: 'assistant', content: JSON.stringify(structured) }
       ];
 
       // Trim conversation to max pairs
@@ -721,10 +737,16 @@ class InsightsService {
       const maxMessages = Math.max(2, maxPairs * 2);
       const trimmedConversation = updatedConversation.slice(-maxMessages);
 
-      return { html: content, conversation: trimmedConversation };
+      return {
+        ...this.buildInsightsResult(report, structured, 'ai'),
+        conversation: trimmedConversation
+      };
     } catch (error) {
       logger.error('Failed to generate insights from data:', error);
-      return { html: null, conversation: conversationMessages || [] };
+      return {
+        ...this.buildInsightsResult(report, null, 'deterministic'),
+        conversation: conversationMessages || []
+      };
     }
   }
 }

@@ -3,6 +3,25 @@ const path = require('path');
 const fs = require('fs');
 const logger = require('./logger.cjs');
 const moment = require('moment');
+const { formatUnitsSummary } = require('./report-data.cjs');
+
+const CSV_HEADERS = [
+  { id: 'name', title: 'Hotel Name' },
+  { id: 'rating', title: 'Rating' },
+  { id: 'location', title: 'Location' },
+  { id: 'cityName', title: 'City Name' },
+  { id: 'price', title: 'Original Price Text' },
+  { id: 'priceParsed', title: 'Parsed Price' },
+  { id: 'numericPrice', title: 'Numeric Price' },
+  { id: 'currency', title: 'Currency' },
+  { id: 'url', title: 'Hotel URL' },
+  { id: 'unitsSummary', title: 'Units Summary' },
+  { id: 'unitsJson', title: 'Units JSON' },
+  { id: 'propertyTypes', title: 'Property Types' },
+  { id: 'extractedAt', title: 'Extracted At' },
+  { id: 'searchDestination', title: 'Search Destination' },
+  { id: 'searchDate', title: 'Search Date' }
+];
 
 class CSVExporter {
   constructor() {
@@ -25,20 +44,7 @@ class CSVExporter {
 
       const csvWriter = createCsvWriter({
         path: csvPath,
-        header: [
-          { id: 'name', title: 'Hotel Name' },
-          { id: 'rating', title: 'Rating' },
-          { id: 'location', title: 'Location' },
-          { id: 'cityName', title: 'City Name' },
-          { id: 'price', title: 'Original Price Text' },
-          { id: 'priceParsed', title: 'Parsed Price' },
-          { id: 'numericPrice', title: 'Numeric Price' },
-          { id: 'currency', title: 'Currency' },
-          { id: 'url', title: 'Hotel URL' },
-          { id: 'extractedAt', title: 'Extracted At' },
-          { id: 'searchDestination', title: 'Search Destination' },
-          { id: 'searchDate', title: 'Search Date' }
-        ]
+        header: CSV_HEADERS
       });
 
       const processedHotels = this.prepareDataForCSV(hotels);
@@ -65,6 +71,9 @@ class CSVExporter {
       numericPrice: hotel.priceParsed?.numericPrice || '',
       currency: hotel.priceParsed?.currency || '',
       url: hotel.url || '',
+      unitsSummary: formatUnitsSummary(hotel.units),
+      unitsJson: Array.isArray(hotel.units) && hotel.units.length > 0 ? JSON.stringify(hotel.units) : '',
+      propertyTypes: Array.isArray(hotel.propertyTypes) ? hotel.propertyTypes.join('; ') : '',
       extractedAt: hotel.extractedAt || new Date().toISOString(),
       searchDestination: config.search.destination,
       searchDate: new Date().toISOString()
@@ -81,20 +90,7 @@ class CSVExporter {
 
       const csvWriter = createCsvWriter({
         path: csvPath,
-        header: [
-          { id: 'name', title: 'Hotel Name' },
-          { id: 'rating', title: 'Rating' },
-          { id: 'location', title: 'Location' },
-          { id: 'cityName', title: 'City Name' },
-          { id: 'price', title: 'Original Price Text' },
-          { id: 'priceParsed', title: 'Parsed Price' },
-          { id: 'numericPrice', title: 'Numeric Price' },
-          { id: 'currency', title: 'Currency' },
-          { id: 'url', title: 'Hotel URL' },
-          { id: 'extractedAt', title: 'Extracted At' },
-          { id: 'searchDestination', title: 'Search Destination' },
-          { id: 'searchDate', title: 'Search Date' }
-        ],
+        header: CSV_HEADERS,
         append: true
       });
 
@@ -171,8 +167,6 @@ class CSVExporter {
 
       const hotels = lines.slice(1).map(line => {
         const fields = this.parseCsvLine(line);
-        // CSV columns: Hotel Name(0), Rating(1), Location(2), City Name(3),
-        //   Original Price Text(4), Parsed Price(5), Numeric Price(6), Currency(7)
         return {
           name: (fields[0] || '').replace(/"/g, ''),
           numericPrice: parseFloat((fields[6] || '').replace(/"/g, '')) || 0,

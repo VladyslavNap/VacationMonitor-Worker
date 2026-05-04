@@ -131,9 +131,11 @@ class PriceMonitorWorker {
       // 4. Store prices in database
       logger.info('Storing prices in database...', { searchId });
       const extractedAt = new Date().toISOString();
+      const runId = `run_${nanoid(16)}`;
       
       const priceRecords = parsedData.map(hotel => ({
         id: `price_${nanoid(16)}`,
+        runId,
         searchId: searchId,
         userId: userId,
         hotelName: hotel.name,
@@ -146,6 +148,7 @@ class PriceMonitorWorker {
         currency: hotel.priceParsed?.currency || search.criteria.currency,
         hotelUrl: hotel.url,
         units: hotel.units || [],
+        propertyTypes: hotel.propertyTypes || [],
         extractedAt: extractedAt,
         searchDestination: search.criteria.cityName,
         searchDate: new Date().toISOString()
@@ -201,12 +204,17 @@ class PriceMonitorWorker {
         const emailHtml = await this.emailService.generateWorkerEmailBody({
           searchCriteria: search.criteria,
           latestPrices: priceRecords,
-          insightsHtml: insights.html
+          insights,
+          report: insights.report
         });
+
+        const destination = search.criteria.cityName || search.criteria.destination || 'destination';
+        const checkIn = search.criteria.checkIn ? `, ${search.criteria.checkIn}` : '';
+        const subject = `Price Monitor: ${search.searchName || destination} - ${destination}${checkIn}, ${priceRecords.length} hotels`;
 
         await this.emailService.sendEmail({
           to: search.emailRecipients,
-          subject: `Price Monitor: ${search.searchName}`,
+          subject,
           html: emailHtml,
           attachments: [] // Could attach CSV if needed
         });

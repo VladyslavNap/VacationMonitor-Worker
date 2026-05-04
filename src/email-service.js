@@ -6,6 +6,12 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const logger = require('./logger.cjs');
+const {
+  buildReportViewModel,
+  buildDeterministicInsights,
+  escapeHtml,
+  formatUnitsSummary: formatUnitText
+} = require('./report-data.cjs');
 const createSMTP2GOApi = SMTP2GOApiModule?.default || SMTP2GOApiModule;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -202,6 +208,14 @@ class EmailService {
     return `${currency} ${numeric.toFixed(2)}`;
   }
 
+  formatPriceChange(value, currency) {
+    if (typeof value !== 'number' || Number.isNaN(value) || value === 0) {
+      return `${currency} 0.00`;
+    }
+    const numeric = Math.round(Math.abs(value) * 100) / 100;
+    return `${value > 0 ? '+' : '-'}${currency} ${numeric.toFixed(2)}`;
+  }
+
   renderPriceSummary(prices, defaultCurrency) {
     if (!Array.isArray(prices) || prices.length === 0) {
       return '<p>No data available.</p>';
@@ -251,6 +265,221 @@ class EmailService {
     const match = text.match(/(\d+[.,]?\d*)/)
     if (!match) return '';
     return match[1].replace(',', '.');
+  }
+
+  getStructuredInsights(insightsResult, report) {
+    if (insightsResult?.structured) {
+      return insightsResult.structured;
+    }
+    if (insightsResult?.insights) {
+      return insightsResult.insights;
+    }
+    if (insightsResult && typeof insightsResult === 'object' && insightsResult.headline) {
+      return insightsResult;
+    }
+    return buildDeterministicInsights(report);
+  }
+
+  safeHotelUrl(url) {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+      const hostname = parsed.hostname.toLowerCase();
+      if (hostname !== 'booking.com' && !hostname.endsWith('.booking.com')) return '';
+      return parsed.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  renderTextList(items) {
+    const values = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!values.length) {
+      return '<p style="margin: 0; color: #64748b;">No significant updates.</p>';
+    }
+
+    return `
+      <ul style="margin: 8px 0 0 18px; padding: 0; color: #334155; line-height: 1.45;">
+        ${values.map((item) => `<li style="margin: 0 0 6px 0;">${escapeHtml(item)}</li>`).join('')}
+      </ul>
+    `;
+  }
+
+  renderMetric(label, value) {
+    return `
+      <td style="padding: 10px 12px; border: 1px solid #e2e8f0; background: #f8fafc;">
+        <div style="font-size: 11px; color: #64748b; text-transform: uppercase;">${escapeHtml(label)}</div>
+        <div style="font-size: 18px; font-weight: 700; color: #0f172a; margin-top: 3px;">${escapeHtml(value)}</div>
+      </td>
+    `;
+  }
+
+  renderMetricsTable(report) {
+    const summary = report.summary || {};
+    return `
+      <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+        <tr>
+          ${this.renderMetric('Hotels', summary.validPriceCount || summary.count || 0)}
+          ${this.renderMetric('Average', this.formatPrice(summary.average || 0, summary.currency || report.searchContext.currency))}
+          ${this.renderMetric('Lowest', this.formatPrice(summary.min || 0, summary.currency || report.searchContext.currency))}
+          ${this.renderMetric('Runs', report.runs?.totalRuns || 0)}
+        </tr>
+      </table>
+    `;
+  }
+
+  renderMovementTable(movements, title) {
+    const rows = Array.isArray(movements) ? movements.slice(0, 8) : [];
+    if (!rows.length) {
+      return `<p style="margin: 8px 0 0 0; color: #64748b;">No price changes for ${escapeHtml(title.toLowerCase())}.</p>`;
+    }
+
+    return `
+      <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px;">
+        <thead>
+          <tr style="background: #f1f5f9; color: #334155;">
+            <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e2e8f0;">Hotel</th>
+            <th style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">Previous</th>
+            <th style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">Current</th>
+            <th style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((item) => {
+            const changeColor = item.change < 0 ? '#047857' : '#b45309';
+            return `
+              <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #0f172a;">${escapeHtml(item.hotelName)}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; white-space: nowrap;">${escapeHtml(this.formatPrice(item.previousPrice, item.currency))}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; white-space: nowrap;">${escapeHtml(this.formatPrice(item.currentPrice, item.currency))}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; color: ${changeColor}; white-space: nowrap; font-weight: 700;">${escapeHtml(this.formatPriceChange(item.change, item.currency))}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  renderHotelList(hotels, emptyText) {
+    const rows = Array.isArray(hotels) ? hotels.slice(0, 8) : [];
+    if (!rows.length) {
+      return `<p style="margin: 8px 0 0 0; color: #64748b;">${escapeHtml(emptyText)}</p>`;
+    }
+
+    return `
+      <ul style="margin: 8px 0 0 18px; padding: 0; color: #334155; line-height: 1.45;">
+        ${rows.map((hotel) => `<li style="margin: 0 0 6px 0;"><strong>${escapeHtml(hotel.hotelName)}</strong> - ${escapeHtml(this.formatPrice(hotel.numericPrice, hotel.currency))}${hotel.location ? `, ${escapeHtml(hotel.location)}` : ''}</li>`).join('')}
+      </ul>
+    `;
+  }
+
+  renderLatestHotels(report) {
+    const hotels = Array.isArray(report.latestHotels) ? report.latestHotels.slice(0, 15) : [];
+    if (!hotels.length) {
+      return '<p style="margin: 0; color: #64748b;">No hotels available for this run.</p>';
+    }
+
+    return `
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <thead>
+          <tr style="background: #f1f5f9; color: #334155;">
+            <th style="text-align: left; padding: 8px; border-bottom: 1px solid #e2e8f0;">Hotel</th>
+            <th style="text-align: center; padding: 8px; border-bottom: 1px solid #e2e8f0;">Rating</th>
+            <th style="text-align: right; padding: 8px; border-bottom: 1px solid #e2e8f0;">Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hotels.map((hotel) => {
+            const safeUrl = this.safeHotelUrl(hotel.hotelUrl);
+            const name = safeUrl
+              ? `<a href="${escapeHtml(safeUrl)}" style="color: #1d4ed8; text-decoration: none;">${escapeHtml(hotel.hotelName)}</a>`
+              : escapeHtml(hotel.hotelName);
+            const location = hotel.location ? `<div style="font-size: 12px; color: #64748b; margin-top: 2px;">${escapeHtml(hotel.location)}</div>` : '';
+            const units = hotel.unitsSummary || formatUnitText(hotel.units);
+            const unitDetails = units ? `<div style="font-size: 12px; color: #475569; margin-top: 3px;">${escapeHtml(units)}</div>` : '';
+            const rating = hotel.ratingValue ? hotel.ratingValue.toFixed(1) : '-';
+            return `
+              <tr>
+                <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; color: #0f172a;">${name}${location}${unitDetails}</td>
+                <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: center; vertical-align: top; color: #0f172a;">${escapeHtml(rating)}</td>
+                <td style="padding: 9px 8px; border-bottom: 1px solid #e2e8f0; text-align: right; vertical-align: top; white-space: nowrap; color: #0f172a; font-weight: 700;">${escapeHtml(this.formatPrice(hotel.numericPrice, hotel.currency))}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  renderSection(title, content) {
+    return `
+      <div style="padding: 16px 0; border-top: 1px solid #e2e8f0;">
+        <h3 style="font-size: 16px; line-height: 1.3; color: #0f172a; margin: 0 0 8px 0;">${escapeHtml(title)}</h3>
+        ${content}
+      </div>
+    `;
+  }
+
+  renderReportEmail({ report, insights, attachmentNote = '' }) {
+    const search = report.searchContext || {};
+    const generatedDate = new Date(report.generatedAt || Date.now()).toLocaleDateString();
+    const dateRange = search.checkIn && search.checkOut ? `${search.checkIn} to ${search.checkOut}` : 'Dates not set';
+    const guests = this.formatGuestsFromCriteria(search);
+    const bestFit = insights.bestFitHotel
+      ? `<p style="margin: 8px 0 0 0; color: #334155;"><strong>${escapeHtml(insights.bestFitHotel.name)}:</strong> ${escapeHtml(insights.bestFitHotel.reason)}</p>`
+      : '';
+    const attachment = attachmentNote
+      ? this.renderSection('Attachment', `<p style="margin: 0; color: #334155;">${escapeHtml(attachmentNote)}</p>`)
+      : '';
+
+    return `
+      <html>
+        <body style="margin: 0; padding: 0; background: #f8fafc; font-family: Arial, sans-serif; color: #0f172a;">
+          <div style="max-width: 760px; margin: 0 auto; padding: 24px 16px; background: #ffffff;">
+            <div style="padding-bottom: 16px; border-bottom: 3px solid #1d4ed8;">
+              <div style="font-size: 12px; color: #64748b; text-transform: uppercase;">Booking.com Price Monitor</div>
+              <h2 style="font-size: 24px; line-height: 1.25; color: #0f172a; margin: 4px 0 6px 0;">${escapeHtml(search.destination || 'Price report')}</h2>
+              <div style="font-size: 14px; color: #475569;">${escapeHtml(dateRange)} | ${escapeHtml(search.nights || 'N/A')} nights | ${escapeHtml(guests)} | ${escapeHtml(search.currency || 'EUR')}</div>
+              <div style="font-size: 12px; color: #64748b; margin-top: 5px;">Generated ${escapeHtml(generatedDate)}</div>
+            </div>
+
+            ${this.renderMetricsTable(report)}
+
+            ${this.renderSection('Decision Summary', `
+              <p style="font-size: 16px; font-weight: 700; color: #0f172a; margin: 0 0 6px 0;">${escapeHtml(insights.headline || 'Report summary')}</p>
+              <p style="margin: 0; color: #334155; line-height: 1.45;">${escapeHtml(insights.briefSummary || 'No insight summary available.')}</p>
+            `)}
+
+            ${this.renderSection('Latest Updates', this.renderTextList(insights.latestUpdates))}
+
+            ${this.renderSection('Recommendations', `${this.renderTextList(insights.recommendations)}${bestFit}`)}
+
+            ${this.renderSection('Price Movements', this.renderMovementTable(report.priceMovements?.vsPrevious || [], 'previous run'))}
+
+            ${this.renderSection('New And Missing Hotels', `
+              <div style="font-weight: 700; color: #334155;">New since previous run</div>
+              ${this.renderHotelList(report.hotelPresence?.vsPrevious?.newHotels || [], 'No new hotels since the previous run.')}
+              <div style="font-weight: 700; color: #334155; margin-top: 12px;">Missing since previous run</div>
+              ${this.renderHotelList(report.hotelPresence?.vsPrevious?.missingHotels || [], 'No hotels disappeared since the previous run.')}
+            `)}
+
+            ${this.renderSection('Full History Highlights', this.renderTextList(insights.historyHighlights))}
+
+            ${this.renderSection(`Latest Hotels (${report.latestHotels?.length || 0})`, this.renderLatestHotels(report))}
+
+            ${attachment}
+
+            ${this.renderSection('Data Notes', this.renderTextList(insights.dataNotes || report.dataNotes))}
+
+            <div style="padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 12px; text-align: center;">
+              This report was generated automatically by the Booking.com Price Monitor.
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
   }
 
   renderLatestHotelsTable(prices, defaultCurrency) {
@@ -321,57 +550,18 @@ class EmailService {
     `;
   }
 
-  async generateWorkerEmailBody({ searchCriteria, latestPrices, insightsHtml }) {
-    const currentDate = new Date().toLocaleDateString();
-    const criteria = searchCriteria || {};
-    const nights = this.getNightsFromCriteria(criteria);
-    const guestSummary = this.formatGuestsFromCriteria(criteria);
-    const destination = criteria.cityName || criteria.destination || 'Unknown Location';
-    const currency = criteria.currency || 'EUR';
+  async generateWorkerEmailBody({ searchCriteria, latestPrices, insightsHtml, insights, report }) {
+    const reportModel = report || insights?.report || buildReportViewModel({
+      priceRecords: latestPrices || [],
+      latestPrices: latestPrices || [],
+      searchCriteria: searchCriteria || {}
+    });
+    const structuredInsights = this.getStructuredInsights(insights || insightsHtml, reportModel);
 
-    return `
-      <html>
-        <body style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto;">
-          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-            Booking.com Price Monitor Report
-          </h2>
-
-          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #34495e; margin-top: 0;">Search Details</h3>
-            <p><strong>Date:</strong> ${currentDate}</p>
-            <p><strong>Destination:</strong> ${destination}</p>
-            <p><strong>Check-in:</strong> ${criteria.checkIn || 'N/A'}</p>
-            <p><strong>Check-out:</strong> ${criteria.checkOut || 'N/A'}</p>
-            <p><strong>Nights:</strong> ${nights || 'N/A'}</p>
-            <p><strong>Guests:</strong> ${guestSummary}</p>
-            <p><strong>Currency:</strong> ${currency}</p>
-          </div>
-
-          <div style="background-color: #eef6ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #1d4ed8; margin-top: 0;">Latest Insights</h3>
-            ${insightsHtml ? insightsHtml : '<p>No insights available for this run.</p>'}
-          </div>
-
-          <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #27ae60; margin-top: 0;">Summary</h3>
-            ${this.renderPriceSummary(latestPrices, currency)}
-          </div>
-
-          <div style="background-color: #ffffff; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #e2e8f0;">
-            <h3 style="color: #1f2937; margin-top: 0;">Latest Hotels (${latestPrices?.length || 0})</h3>
-            ${this.renderLatestHotelsTable(latestPrices, currency)}
-          </div>
-
-          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1;">
-            <p style="color: #7f8c8d; font-size: 12px;">
-              This report was generated automatically by the Booking.com Price Monitor.
-              <br>
-              For questions or support, please check the application logs.
-            </p>
-          </div>
-        </body>
-      </html>
-    `;
+    return this.renderReportEmail({
+      report: reportModel,
+      insights: structuredInsights
+    });
   }
 
   async generateEmailBody(summary, insightsHtml) {
@@ -383,55 +573,24 @@ class EmailService {
     } catch (error) {
       logger.warn('Could not load search config:', error);
     }
-    const currentDate = new Date().toLocaleDateString();
-    
-    return `
-      <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-            📊 Booking.com Price Monitor Report
-          </h2>
-          
-          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #34495e; margin-top: 0;">📅 Search Details</h3>
-            <p><strong>Date:</strong> ${currentDate}</p>
-            <p><strong>Destination:</strong> ${config.search.cityName || 'Unknown Location'}</p>
-            <p><strong>Check-in:</strong> ${config.search.checkIn}</p>
-            <p><strong>Check-out:</strong> ${config.search.checkOut}</p>
-            <p><strong>Guests:</strong> ${config.search.adults} adults${config.search.children > 0 ? `, ${config.search.children} children` : ''}</p>
-            <p><strong>Currency:</strong> ${config.search.currency}</p>
-          </div>
+    const reportModel = insightsHtml?.report || buildReportViewModel({ searchCriteria: config.search || {} });
+    if (summary && !insightsHtml?.report) {
+      reportModel.summary = {
+        count: summary.totalHotels || 0,
+        validPriceCount: summary.totalHotels || 0,
+        average: summary.averagePrice || 0,
+        min: summary.priceRange?.min || 0,
+        max: summary.priceRange?.max || 0,
+        currency: summary.currency || config.search?.currency || 'EUR'
+      };
+    }
+    const structuredInsights = this.getStructuredInsights(insightsHtml, reportModel);
 
-          <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #27ae60; margin-top: 0;">📈 Price Summary</h3>
-            ${summary ? `
-              <p><strong>Total Hotels Found:</strong> ${summary.totalHotels}</p>
-              <p><strong>Average Price:</strong> ${summary.currency} ${summary.averagePrice.toFixed(2)}</p>
-              <p><strong>Price Range:</strong> ${summary.currency} ${summary.priceRange.min.toFixed(2)} - ${summary.currency} ${summary.priceRange.max.toFixed(2)}</p>
-            ` : '<p>No summary data available</p>'}
-          </div>
-
-          <div style="background-color: #eef6ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #1d4ed8; margin-top: 0;">🧠 Latest Insights</h3>
-            ${insightsHtml ? insightsHtml : '<p>No insights available for this run.</p>'}
-          </div>
-
-          <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #856404; margin-top: 0;">📎 Attachment</h3>
-            <p>The detailed CSV file with all hotel data is attached to this email.</p>
-            <p>You can open it in Excel, Google Sheets, or any spreadsheet application for further analysis.</p>
-          </div>
-
-          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1;">
-            <p style="color: #7f8c8d; font-size: 12px;">
-              This report was generated automatically by the Booking.com Price Monitor.
-              <br>
-              For questions or support, please check the application logs.
-            </p>
-          </div>
-        </body>
-      </html>
-    `;
+    return this.renderReportEmail({
+      report: reportModel,
+      insights: structuredInsights,
+      attachmentNote: 'The detailed CSV file with hotel data is attached to this email.'
+    });
   }
 
   async sendTestEmail() {
